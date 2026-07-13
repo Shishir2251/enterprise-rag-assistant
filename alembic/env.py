@@ -4,11 +4,9 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.core.config import settings
-from app.infrastructure.database.base import Base
-
 # Import all models so Alembic can detect them
-from app.data_access.models.user_model import UserModel
-from app.data_access.models.document_model import DocumentModel
+import app.data_access.models  # noqa: F401
+from app.infrastructure.database.base import Base
 
 
 # Alembic configuration object

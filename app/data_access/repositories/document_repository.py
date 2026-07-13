@@ -13,10 +13,14 @@ class DocumentRepository(IDocumentRepository):
         self.db = db
 
     def create(self, document: DocumentModel) -> DocumentModel:
-        self.db.add(document)
-        self.db.commit()
-        self.db.refresh(document)
-        return document
+        try:
+            self.db.add(document)
+            self.db.commit()
+            self.db.refresh(document)
+            return document
+        except Exception:
+            self.db.rollback()
+            raise
 
     def get_by_id(
         self,
@@ -43,5 +47,27 @@ class DocumentRepository(IDocumentRepository):
         return list(self.db.scalars(statement).all())
 
     def delete(self, document: DocumentModel) -> None:
-        self.db.delete(document)
-        self.db.commit()
+        try:
+            self.db.delete(document)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def update_status(
+        self,
+        document: DocumentModel,
+        document_status: str,
+        error_message: str | None = None,
+    ) -> DocumentModel:
+        document.status = document_status
+        document.error_message = error_message
+
+        try:
+            self.db.add(document)
+            self.db.commit()
+            self.db.refresh(document)
+            return document
+        except Exception:
+            self.db.rollback()
+            raise

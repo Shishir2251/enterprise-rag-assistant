@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from fastapi import UploadFile
+from app.business.interfaces.uploaded_file_interface import IUploadedFile
 
 
 class IFileStorage(ABC):
@@ -8,8 +8,9 @@ class IFileStorage(ABC):
     @abstractmethod
     def save(
         self,
-        file: UploadFile,
+        file: IUploadedFile,
         owner_id: str,
+        extension: str,
     ) -> tuple[str, str]:
         raise NotImplementedError
 

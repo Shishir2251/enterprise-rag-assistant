@@ -1,0 +1,34 @@
+class ApplicationError(Exception):
+    """Base class for errors safe to expose through the API."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
+class ValidationError(ApplicationError):
+    """Raised when application input fails validation."""
+
+
+class PayloadTooLargeError(ValidationError):
+    """Raised when an uploaded payload exceeds the configured limit."""
+
+
+class NotFoundError(ApplicationError):
+    """Raised when an owned resource cannot be found."""
+
+
+class ConflictError(ApplicationError):
+    """Raised when an operation conflicts with existing state."""
+
+
+class AuthenticationError(ApplicationError):
+    """Raised when credentials are invalid."""
+
+
+class AuthorizationError(ApplicationError):
+    """Raised when an authenticated principal is not allowed to act."""
+
+
+class DocumentProcessingError(ApplicationError):
+    """Raised when a document cannot be safely processed."""

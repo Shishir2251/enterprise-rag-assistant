@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+
 from jose import JWTError
 from jose import jwt
 from passlib.context import CryptContext
@@ -25,6 +26,8 @@ def create_access_token(subject: str, expires_delta: Optional[timedelta] = None)
     payload = {
         "sub": subject,
         "exp": expire,
+        "iat": datetime.now(timezone.utc),
+        "type": "access",
     }
 
     return jwt.encode(
@@ -38,14 +41,23 @@ def decode_access_token(token: str) -> str:
             token,
             settings.JWT_SECRET_KEY,
             algorithms=[settings.JWT_ALGORITHM],
+            options={
+                "require_exp": True,
+                "require_iat": True,
+                "require_sub": True,
+            },
         )
 
-        user_id: str | None = payload.get("sub")
+        user_id = payload.get("sub")
 
-        if user_id is None:
+        if (
+            not isinstance(user_id, str)
+            or not user_id
+            or payload.get("type") != "access"
+        ):
             raise ValueError("Invalid token payload")
 
         return user_id
 
-    except JWTError:
-        raise ValueError("Invalid or expired token")
+    except JWTError as exc:
+        raise ValueError("Invalid or expired token") from exc

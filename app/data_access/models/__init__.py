@@ -1,7 +1,9 @@
-from app.data_access.models.user_model import UserModel
+from app.data_access.models.document_chunk_model import DocumentChunkModel
 from app.data_access.models.document_model import DocumentModel
+from app.data_access.models.user_model import UserModel
 
 __all__ = [
     "UserModel",
     "DocumentModel",
+    "DocumentChunkModel",
 ]

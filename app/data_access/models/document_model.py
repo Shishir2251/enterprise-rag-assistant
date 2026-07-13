@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import String, DateTime, ForeignKey, BigInteger
+from sqlalchemy import BigInteger, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infrastructure.database.base import Base
@@ -80,7 +80,15 @@ class DocumentModel(Base):
         onupdate=datetime.utcnow,
         nullable=False,
     )
+
     owner = relationship(
-    "UserModel",
-    back_populates="documents",
+        "UserModel",
+        back_populates="documents",
+    )
+
+    chunks = relationship(
+        "DocumentChunkModel",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )

@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from fastapi import UploadFile
+from app.business.interfaces.uploaded_file_interface import IUploadedFile
 
 from app.data_access.models.document_model import DocumentModel
 
@@ -10,7 +10,7 @@ class IDocumentService(ABC):
     @abstractmethod
     def upload(
         self,
-        file: UploadFile,
+        file: IUploadedFile,
         owner_id: str,
     ) -> DocumentModel:
         raise NotImplementedError

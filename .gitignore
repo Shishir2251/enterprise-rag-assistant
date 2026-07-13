@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 .env
 uploads/
-alembic/versions/
 .DS_Store
 .idea/
 .vscode/
+.agents/

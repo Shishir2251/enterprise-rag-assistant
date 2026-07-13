@@ -27,3 +27,12 @@ class IDocumentRepository(ABC):
     @abstractmethod
     def delete(self, document: DocumentModel) -> None:
         raise NotImplementedError
+
+    @abstractmethod
+    def update_status(
+        self,
+        document: DocumentModel,
+        document_status: str,
+        error_message: str | None = None,
+    ) -> DocumentModel:
+        raise NotImplementedError
