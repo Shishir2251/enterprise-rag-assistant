@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.business.services.embedding_service import EmbeddingService
 from app.core.exceptions import (
+    ConfigurationError,
     ConflictError,
     EmbeddingError,
     NotFoundError,
@@ -19,6 +20,7 @@ from app.infrastructure.embeddings.openai_embedding_provider import (
 from app.main import app
 from app.presentation.dependencies.auth_dependency import get_current_user
 from app.presentation.dependencies.service_dependency import (
+    get_embedding_provider,
     get_embedding_service,
 )
 
@@ -122,6 +124,17 @@ class FakeEmbeddingProvider:
 
 
 class EmbeddingProviderTests(unittest.TestCase):
+    def test_placeholder_api_key_is_reported_as_configuration_error(self) -> None:
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "OPENAI_API_KEY is not configured",
+        ):
+            OpenAIEmbeddingProvider(
+                api_key="your_openai_api_key",
+                model_name="test-model",
+                dimensions=3,
+            )
+
     def test_empty_embedding_input_does_not_call_openai(self) -> None:
         client = Mock()
         provider = OpenAIEmbeddingProvider(
@@ -272,6 +285,25 @@ class EmbeddingEndpointTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 401)
+
+    def test_missing_openai_configuration_returns_503(self) -> None:
+        def missing_provider():
+            raise ConfigurationError("OPENAI_API_KEY is not configured")
+
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            id="owner-id"
+        )
+        app.dependency_overrides[get_embedding_provider] = missing_provider
+
+        response = TestClient(app).post(
+            "/api/v1/documents/document-id/embed"
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json(),
+            {"detail": "OPENAI_API_KEY is not configured"},
+        )
 
     def test_unprocessed_document_returns_409(self) -> None:
         embedding_service = Mock()

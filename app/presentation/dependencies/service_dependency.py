@@ -6,13 +6,20 @@ from app.business.interfaces.document_service_interface import IDocumentService
 from app.business.interfaces.embedding_service_interface import (
     IEmbeddingService,
 )
+from app.business.interfaces.embedding_provider_interface import (
+    IEmbeddingProvider,
+)
 from app.business.interfaces.file_storage_interface import IFileStorage
 from app.business.interfaces.ingestion_service_interface import IIngestionService
+from app.business.interfaces.retrieval_service_interface import (
+    IRetrievalService,
+)
 from app.business.services.auth_service import AuthService
 from app.business.services.chunking_service import ChunkingService
 from app.business.services.document_service import DocumentService
 from app.business.services.embedding_service import EmbeddingService
 from app.business.services.ingestion_service import IngestionService
+from app.business.services.retrieval_service import RetrievalService
 from app.core.config import settings
 from app.data_access.interfaces.document_chunk_repository_interface import (
     IDocumentChunkRepository,
@@ -21,10 +28,14 @@ from app.data_access.interfaces.document_repository_interface import (
     IDocumentRepository,
 )
 from app.data_access.interfaces.user_repository_interface import IUserRepository
+from app.data_access.interfaces.vector_repository_interface import (
+    IVectorRepository,
+)
 from app.data_access.repositories.document_chunk_repository import (
     DocumentChunkRepository,
 )
 from app.data_access.repositories.document_repository import DocumentRepository
+from app.data_access.repositories.pgvector_repository import PgVectorRepository
 from app.data_access.repositories.user_repository import UserRepository
 from app.infrastructure.database.session import get_db
 from app.infrastructure.embeddings.openai_embedding_provider import (
@@ -56,8 +67,22 @@ def get_chunk_repository(
     return DocumentChunkRepository(db)
 
 
+def get_vector_repository(
+    db: Session = Depends(get_db),
+) -> IVectorRepository:
+    return PgVectorRepository(db)
+
+
 def get_file_storage() -> IFileStorage:
     return LocalStorageProvider()
+
+
+def get_embedding_provider() -> IEmbeddingProvider:
+    return OpenAIEmbeddingProvider(
+        api_key=settings.OPENAI_API_KEY.get_secret_value(),
+        model_name=settings.EMBEDDING_MODEL,
+        dimensions=settings.EMBEDDING_DIMENSION,
+    )
 
 
 def get_auth_service(
@@ -102,15 +127,23 @@ def get_embedding_service(
     chunk_repository: IDocumentChunkRepository = Depends(
         get_chunk_repository
     ),
+    provider: IEmbeddingProvider = Depends(get_embedding_provider),
 ) -> IEmbeddingService:
-    provider = OpenAIEmbeddingProvider(
-        api_key=settings.OPENAI_API_KEY.get_secret_value(),
-        model_name=settings.EMBEDDING_MODEL,
-        dimensions=settings.EMBEDDING_DIMENSION,
-    )
     return EmbeddingService(
         document_repository=document_repository,
         chunk_repository=chunk_repository,
         embedding_provider=provider,
         batch_size=settings.EMBEDDING_BATCH_SIZE,
+    )
+
+
+def get_retrieval_service(
+    vector_repository: IVectorRepository = Depends(get_vector_repository),
+    provider: IEmbeddingProvider = Depends(get_embedding_provider),
+) -> IRetrievalService:
+    return RetrievalService(
+        vector_repository=vector_repository,
+        embedding_provider=provider,
+        default_top_k=settings.RETRIEVAL_TOP_K,
+        minimum_score=settings.RETRIEVAL_MIN_SCORE,
     )

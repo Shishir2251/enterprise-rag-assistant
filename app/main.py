@@ -5,6 +5,9 @@ from app.presentation.controllers.auth_controller import router as auth_router
 from app.presentation.controllers.document_controller import (
     router as document_router,
 )
+from app.presentation.controllers.retrieval_controller import (
+    router as retrieval_router,
+)
 from app.presentation.controllers.user_controller import router as user_router
 from app.presentation.exception_handlers import register_exception_handlers
 
@@ -20,6 +23,7 @@ register_exception_handlers(app)
 app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(document_router)
+app.include_router(retrieval_router)
 
 
 @app.get("/health")

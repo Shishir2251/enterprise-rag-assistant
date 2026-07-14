@@ -6,7 +6,11 @@ from openai import OpenAI
 from app.business.interfaces.embedding_provider_interface import (
     IEmbeddingProvider,
 )
-from app.core.exceptions import EmbeddingError, ValidationError
+from app.core.exceptions import (
+    ConfigurationError,
+    EmbeddingError,
+    ValidationError,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -23,11 +27,13 @@ class OpenAIEmbeddingProvider(IEmbeddingProvider):
     ) -> None:
         normalized_api_key = api_key.strip()
         if not normalized_api_key or normalized_api_key.startswith("your_"):
-            raise ValueError("OPENAI_API_KEY is not configured")
+            raise ConfigurationError("OPENAI_API_KEY is not configured")
         if not model_name.strip():
-            raise ValueError("EMBEDDING_MODEL must not be empty")
+            raise ConfigurationError("EMBEDDING_MODEL must not be empty")
         if dimensions <= 0:
-            raise ValueError("EMBEDDING_DIMENSION must be greater than zero")
+            raise ConfigurationError(
+                "EMBEDDING_DIMENSION must be greater than zero"
+            )
 
         self._model_name = model_name.strip()
         self._dimensions = dimensions

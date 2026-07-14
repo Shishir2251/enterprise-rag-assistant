@@ -36,3 +36,11 @@ class DocumentProcessingError(ApplicationError):
 
 class EmbeddingError(ApplicationError):
     """Raised when an embedding provider returns an invalid result."""
+
+
+class RetrievalError(ApplicationError):
+    """Raised when retrieval infrastructure cannot complete a search."""
+
+
+class ConfigurationError(ApplicationError):
+    """Raised when a required application integration is not configured."""

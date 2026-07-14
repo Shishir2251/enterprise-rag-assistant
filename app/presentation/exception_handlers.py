@@ -6,10 +6,12 @@ from app.core.exceptions import (
     AuthenticationError,
     AuthorizationError,
     ConflictError,
+    ConfigurationError,
     DocumentProcessingError,
     EmbeddingError,
     NotFoundError,
     PayloadTooLargeError,
+    RetrievalError,
     ValidationError,
 )
 
@@ -22,6 +24,8 @@ STATUS_BY_EXCEPTION: dict[type[ApplicationError], int] = {
     PayloadTooLargeError: status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
     DocumentProcessingError: status.HTTP_422_UNPROCESSABLE_ENTITY,
     EmbeddingError: status.HTTP_502_BAD_GATEWAY,
+    RetrievalError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    ConfigurationError: status.HTTP_503_SERVICE_UNAVAILABLE,
     ValidationError: status.HTTP_400_BAD_REQUEST,
 }
 
