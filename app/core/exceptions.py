@@ -32,3 +32,7 @@ class AuthorizationError(ApplicationError):
 
 class DocumentProcessingError(ApplicationError):
     """Raised when a document cannot be safely processed."""
+
+
+class EmbeddingError(ApplicationError):
+    """Raised when an embedding provider returns an invalid result."""

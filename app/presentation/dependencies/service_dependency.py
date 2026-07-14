@@ -3,11 +3,15 @@ from sqlalchemy.orm import Session
 
 from app.business.interfaces.auth_service_interface import IAuthService
 from app.business.interfaces.document_service_interface import IDocumentService
+from app.business.interfaces.embedding_service_interface import (
+    IEmbeddingService,
+)
 from app.business.interfaces.file_storage_interface import IFileStorage
 from app.business.interfaces.ingestion_service_interface import IIngestionService
 from app.business.services.auth_service import AuthService
 from app.business.services.chunking_service import ChunkingService
 from app.business.services.document_service import DocumentService
+from app.business.services.embedding_service import EmbeddingService
 from app.business.services.ingestion_service import IngestionService
 from app.core.config import settings
 from app.data_access.interfaces.document_chunk_repository_interface import (
@@ -23,6 +27,9 @@ from app.data_access.repositories.document_chunk_repository import (
 from app.data_access.repositories.document_repository import DocumentRepository
 from app.data_access.repositories.user_repository import UserRepository
 from app.infrastructure.database.session import get_db
+from app.infrastructure.embeddings.openai_embedding_provider import (
+    OpenAIEmbeddingProvider,
+)
 from app.infrastructure.file_storage.local_storage_provider import (
     LocalStorageProvider,
 )
@@ -85,4 +92,25 @@ def get_ingestion_service(
             chunk_overlap=settings.CHUNK_OVERLAP,
         ),
         extractor_factory=TextExtractorFactory(),
+    )
+
+
+def get_embedding_service(
+    document_repository: IDocumentRepository = Depends(
+        get_document_repository
+    ),
+    chunk_repository: IDocumentChunkRepository = Depends(
+        get_chunk_repository
+    ),
+) -> IEmbeddingService:
+    provider = OpenAIEmbeddingProvider(
+        api_key=settings.OPENAI_API_KEY.get_secret_value(),
+        model_name=settings.EMBEDDING_MODEL,
+        dimensions=settings.EMBEDDING_DIMENSION,
+    )
+    return EmbeddingService(
+        document_repository=document_repository,
+        chunk_repository=chunk_repository,
+        embedding_provider=provider,
+        batch_size=settings.EMBEDDING_BATCH_SIZE,
     )

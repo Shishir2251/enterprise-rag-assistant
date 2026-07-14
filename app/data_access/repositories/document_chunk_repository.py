@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -76,6 +78,39 @@ class DocumentChunkRepository(IDocumentChunkRepository):
                 self.db.refresh(chunk)
 
             return chunks
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def list_without_embeddings(
+        self,
+        document_id: str,
+    ) -> list[DocumentChunkModel]:
+        statement = (
+            select(DocumentChunkModel)
+            .where(
+                DocumentChunkModel.document_id == document_id,
+                DocumentChunkModel.embedding.is_(None),
+            )
+            .order_by(DocumentChunkModel.chunk_index.asc())
+        )
+        return list(self.db.scalars(statement).all())
+
+    def save_embeddings(
+        self,
+        chunks: list[DocumentChunkModel],
+        model_name: str,
+        embedded_at: datetime,
+    ) -> None:
+        if not chunks:
+            return
+
+        try:
+            for chunk in chunks:
+                chunk.embedding_model = model_name
+                chunk.embedded_at = embedded_at
+            self.db.add_all(chunks)
+            self.db.commit()
         except Exception:
             self.db.rollback()
             raise

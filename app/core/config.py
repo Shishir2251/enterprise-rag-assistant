@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,8 +16,13 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: Literal["HS256", "HS384", "HS512"] = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
-    # Future use
-    OPENAI_API_KEY: str = ""
+    OPENAI_API_KEY: SecretStr = SecretStr("")
+    EMBEDDING_MODEL: str = "text-embedding-3-small"
+    EMBEDDING_DIMENSION: int = Field(default=1536, gt=0)
+    EMBEDDING_BATCH_SIZE: int = Field(default=50, gt=0)
+    RETRIEVAL_TOP_K: int = Field(default=5, gt=0)
+    RETRIEVAL_MIN_SCORE: float = Field(default=0.30, ge=0.0, le=1.0)
+
     REDIS_URL: str = ""
     UPLOAD_DIR: str = "uploads"
     MAX_UPLOAD_SIZE_BYTES: int = 10 * 1024 * 1024
@@ -28,6 +33,15 @@ class Settings(BaseSettings):
         env_file=".env",
         extra="ignore",
     )
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def validate_database_url(cls, value: str) -> str:
+        if value.startswith("postgres://"):
+            value = value.replace("postgres://", "postgresql://", 1)
+        if not value.startswith("postgresql://"):
+            raise ValueError("DATABASE_URL must use the postgresql:// scheme")
+        return value
 
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":

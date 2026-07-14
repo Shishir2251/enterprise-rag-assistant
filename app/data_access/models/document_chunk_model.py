@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -57,6 +58,21 @@ class DocumentChunkModel(Base):
         DateTime,
         default=datetime.utcnow,
         nullable=False,
+    )
+
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(1536),
+        nullable=True,
+    )
+
+    embedding_model: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    embedded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     document = relationship(

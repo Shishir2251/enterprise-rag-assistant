@@ -1,6 +1,9 @@
 from fastapi import APIRouter, Depends, File, Response, UploadFile, status
 
 from app.business.interfaces.document_service_interface import IDocumentService
+from app.business.interfaces.embedding_service_interface import (
+    IEmbeddingService,
+)
 from app.business.interfaces.ingestion_service_interface import (
     IIngestionService,
 )
@@ -8,6 +11,7 @@ from app.data_access.models.user_model import UserModel
 from app.presentation.dependencies.auth_dependency import get_current_user
 from app.presentation.dependencies.service_dependency import (
     get_document_service,
+    get_embedding_service,
     get_ingestion_service,
 )
 from app.presentation.schemas.document_chunk_schema import (
@@ -17,6 +21,7 @@ from app.presentation.schemas.document_schema import (
     DocumentProcessResponse,
     DocumentResponse,
 )
+from app.presentation.schemas.embedding_schema import DocumentEmbeddingResponse
 
 
 router = APIRouter(
@@ -96,6 +101,26 @@ def process_document(
     return ingestion_service.process_document(
         document_id=document_id,
         owner_id=current_user.id,
+    )
+
+
+@router.post(
+    "/{document_id}/embed",
+    response_model=DocumentEmbeddingResponse,
+)
+def embed_document(
+    document_id: str,
+    current_user: UserModel = Depends(get_current_user),
+    embedding_service: IEmbeddingService = Depends(get_embedding_service),
+) -> DocumentEmbeddingResponse:
+    embedded_chunks = embedding_service.embed_document(
+        document_id=document_id,
+        owner_id=current_user.id,
+    )
+    return DocumentEmbeddingResponse(
+        document_id=document_id,
+        embedded_chunks=embedded_chunks,
+        status="embedded" if embedded_chunks else "already_embedded",
     )
 
 

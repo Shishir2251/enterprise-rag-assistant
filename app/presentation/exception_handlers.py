@@ -7,6 +7,7 @@ from app.core.exceptions import (
     AuthorizationError,
     ConflictError,
     DocumentProcessingError,
+    EmbeddingError,
     NotFoundError,
     PayloadTooLargeError,
     ValidationError,
@@ -20,6 +21,7 @@ STATUS_BY_EXCEPTION: dict[type[ApplicationError], int] = {
     ConflictError: status.HTTP_409_CONFLICT,
     PayloadTooLargeError: status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
     DocumentProcessingError: status.HTTP_422_UNPROCESSABLE_ENTITY,
+    EmbeddingError: status.HTTP_502_BAD_GATEWAY,
     ValidationError: status.HTTP_400_BAD_REQUEST,
 }
 

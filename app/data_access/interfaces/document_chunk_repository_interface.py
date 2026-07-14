@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from datetime import datetime
 
 from app.data_access.models.document_chunk_model import DocumentChunkModel
 
@@ -32,4 +33,20 @@ class IDocumentChunkRepository(ABC):
         document_id: str,
         chunks: list[DocumentChunkModel],
     ) -> list[DocumentChunkModel]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_without_embeddings(
+        self,
+        document_id: str,
+    ) -> list[DocumentChunkModel]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def save_embeddings(
+        self,
+        chunks: list[DocumentChunkModel],
+        model_name: str,
+        embedded_at: datetime,
+    ) -> None:
         raise NotImplementedError
