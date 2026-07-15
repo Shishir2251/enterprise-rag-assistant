@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 class RetrievalSearchRequest(BaseModel):
     query: str = Field(..., min_length=2, max_length=2000)
     top_k: int | None = Field(default=None, ge=1, le=20)
-    document_ids: list[UUID] | None = None
+    document_ids: list[UUID] = Field(default_factory=list)
 
 
 class RetrievalResultResponse(BaseModel):
@@ -24,4 +24,5 @@ class RetrievalResultResponse(BaseModel):
 class RetrievalSearchResponse(BaseModel):
     query: str
     total_results: int
+    embedding_provider: str
     results: list[RetrievalResultResponse]

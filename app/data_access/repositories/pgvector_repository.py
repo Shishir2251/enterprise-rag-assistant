@@ -25,11 +25,9 @@ class PgVectorRepository(IVectorRepository):
         owner_id: str,
         top_k: int,
         minimum_score: float,
+        embedding_model: str,
         document_ids: Sequence[str] | None = None,
     ) -> list[RetrievalResult]:
-        if document_ids is not None and not document_ids:
-            return []
-
         cosine_distance = DocumentChunkModel.embedding.cosine_distance(
             query_embedding
         )
@@ -55,13 +53,14 @@ class PgVectorRepository(IVectorRepository):
                 DocumentModel.owner_id == owner_id,
                 DocumentModel.status == DocumentStatus.COMPLETED.value,
                 DocumentChunkModel.embedding.is_not(None),
+                DocumentChunkModel.embedding_model == embedding_model,
                 similarity_score >= minimum_score,
             )
             .order_by(cosine_distance.asc())
             .limit(top_k)
         )
 
-        if document_ids is not None:
+        if document_ids:
             statement = statement.where(
                 DocumentChunkModel.document_id.in_(list(document_ids))
             )

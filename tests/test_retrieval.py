@@ -12,6 +12,7 @@ from app.data_access.repositories.pgvector_repository import PgVectorRepository
 from app.main import app
 from app.presentation.dependencies.auth_dependency import get_current_user
 from app.presentation.dependencies.service_dependency import (
+    get_embedding_provider,
     get_retrieval_service,
 )
 
@@ -112,6 +113,7 @@ class RetrievalServiceTests(unittest.TestCase):
                     "owner_id": "owner-id",
                     "top_k": 5,
                     "minimum_score": 0.30,
+                    "embedding_model": "test-model",
                     "document_ids": ["document-id"],
                 }
             ],
@@ -159,6 +161,7 @@ class PgVectorRepositoryStatementTests(unittest.TestCase):
             owner_id=owner_id,
             top_k=5,
             minimum_score=minimum_score,
+            embedding_model="test-model",
             document_ids=document_ids,
         )
         statement = session.execute.call_args.args[0]
@@ -202,6 +205,12 @@ class PgVectorRepositoryStatementTests(unittest.TestCase):
         self.assertIn("document_chunks.embedding IS NOT NULL", sql)
         self.assertIn("documents.status =", sql)
         self.assertEqual(params["status_1"], "completed")
+
+    def test_only_active_embedding_model_is_searched(self) -> None:
+        sql, params, _ = self.execute_search()
+
+        self.assertIn("document_chunks.embedding_model =", sql)
+        self.assertEqual(params["embedding_model_1"], "test-model")
 
     def test_results_are_ordered_by_smallest_cosine_distance(self) -> None:
         sql, _, results = self.execute_search(
@@ -247,6 +256,9 @@ class RetrievalEndpointTests(unittest.TestCase):
             id="owner-id"
         )
         app.dependency_overrides[get_retrieval_service] = lambda: retrieval_service
+        app.dependency_overrides[get_embedding_provider] = lambda: SimpleNamespace(
+            provider_name="fake"
+        )
 
         response = TestClient(app).post(
             "/api/v1/retrieval/search",
@@ -256,6 +268,7 @@ class RetrievalEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body["total_results"], 1)
+        self.assertEqual(body["embedding_provider"], "fake")
         self.assertNotIn("embedding", body["results"][0])
         self.assertEqual(body["results"][0]["similarity_score"], 0.91)
 

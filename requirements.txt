@@ -16,3 +16,4 @@ celery
 pypdf
 python-docx
 email-validator
+pytest

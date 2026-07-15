@@ -17,7 +17,8 @@ class Settings(BaseSettings):
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
     OPENAI_API_KEY: SecretStr = SecretStr("")
-    EMBEDDING_MODEL: str = "text-embedding-3-small"
+    EMBEDDING_PROVIDER: str = "fake"
+    EMBEDDING_MODEL: str = "fake-embedding-v1"
     EMBEDDING_DIMENSION: int = Field(default=1536, gt=0)
     EMBEDDING_BATCH_SIZE: int = Field(default=50, gt=0)
     RETRIEVAL_TOP_K: int = Field(default=5, gt=0)

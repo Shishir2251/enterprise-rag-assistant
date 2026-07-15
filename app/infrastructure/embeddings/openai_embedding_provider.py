@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Sequence
 
+from openai import AuthenticationError as OpenAIAuthenticationError
 from openai import OpenAI
 
 from app.business.interfaces.embedding_provider_interface import (
@@ -40,6 +41,10 @@ class OpenAIEmbeddingProvider(IEmbeddingProvider):
         self._client = client or OpenAI(api_key=normalized_api_key)
 
     @property
+    def provider_name(self) -> str:
+        return "openai"
+
+    @property
     def model_name(self) -> str:
         return self._model_name
 
@@ -63,6 +68,11 @@ class OpenAIEmbeddingProvider(IEmbeddingProvider):
                 input=inputs,
                 dimensions=self.dimensions,
             )
+        except OpenAIAuthenticationError as exc:
+            logger.warning("OpenAI rejected the configured API key")
+            raise ConfigurationError(
+                "OPENAI_API_KEY was rejected by OpenAI"
+            ) from exc
         except Exception as exc:
             logger.exception("OpenAI embedding request failed")
             raise EmbeddingError("Embedding provider request failed") from exc

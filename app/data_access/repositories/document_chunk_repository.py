@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.data_access.interfaces.document_chunk_repository_interface import (
@@ -111,6 +111,36 @@ class DocumentChunkRepository(IDocumentChunkRepository):
                 chunk.embedded_at = embedded_at
             self.db.add_all(chunks)
             self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def clear_embeddings(
+        self,
+        document_id: str,
+    ) -> int:
+        statement = (
+            update(DocumentChunkModel)
+            .where(
+                DocumentChunkModel.document_id == document_id,
+                or_(
+                    DocumentChunkModel.embedding.is_not(None),
+                    DocumentChunkModel.embedding_model.is_not(None),
+                    DocumentChunkModel.embedded_at.is_not(None),
+                ),
+            )
+            .values(
+                embedding=None,
+                embedding_model=None,
+                embedded_at=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
+
+        try:
+            result = self.db.execute(statement)
+            self.db.commit()
+            return int(result.rowcount or 0)
         except Exception:
             self.db.rollback()
             raise

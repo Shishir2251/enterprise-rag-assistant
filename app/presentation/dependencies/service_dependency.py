@@ -2,6 +2,7 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from app.business.interfaces.auth_service_interface import IAuthService
+from app.business.interfaces.context_builder_interface import IContextBuilder
 from app.business.interfaces.document_service_interface import IDocumentService
 from app.business.interfaces.embedding_service_interface import (
     IEmbeddingService,
@@ -16,6 +17,7 @@ from app.business.interfaces.retrieval_service_interface import (
 )
 from app.business.services.auth_service import AuthService
 from app.business.services.chunking_service import ChunkingService
+from app.business.services.context_builder_service import ContextBuilderService
 from app.business.services.document_service import DocumentService
 from app.business.services.embedding_service import EmbeddingService
 from app.business.services.ingestion_service import IngestionService
@@ -38,8 +40,8 @@ from app.data_access.repositories.document_repository import DocumentRepository
 from app.data_access.repositories.pgvector_repository import PgVectorRepository
 from app.data_access.repositories.user_repository import UserRepository
 from app.infrastructure.database.session import get_db
-from app.infrastructure.embeddings.openai_embedding_provider import (
-    OpenAIEmbeddingProvider,
+from app.infrastructure.embeddings.embedding_provider_factory import (
+    create_embedding_provider,
 )
 from app.infrastructure.file_storage.local_storage_provider import (
     LocalStorageProvider,
@@ -78,11 +80,7 @@ def get_file_storage() -> IFileStorage:
 
 
 def get_embedding_provider() -> IEmbeddingProvider:
-    return OpenAIEmbeddingProvider(
-        api_key=settings.OPENAI_API_KEY.get_secret_value(),
-        model_name=settings.EMBEDDING_MODEL,
-        dimensions=settings.EMBEDDING_DIMENSION,
-    )
+    return create_embedding_provider(settings)
 
 
 def get_auth_service(
@@ -147,3 +145,7 @@ def get_retrieval_service(
         default_top_k=settings.RETRIEVAL_TOP_K,
         minimum_score=settings.RETRIEVAL_MIN_SCORE,
     )
+
+
+def get_context_builder_service() -> IContextBuilder:
+    return ContextBuilderService()

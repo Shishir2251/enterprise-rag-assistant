@@ -1,50 +1,50 @@
 from fastapi import APIRouter, Depends
 
+from app.business.interfaces.context_builder_interface import IContextBuilder
 from app.business.interfaces.retrieval_service_interface import (
     IRetrievalService,
-)
-from app.business.interfaces.embedding_provider_interface import (
-    IEmbeddingProvider,
 )
 from app.data_access.models.user_model import UserModel
 from app.presentation.dependencies.auth_dependency import get_current_user
 from app.presentation.dependencies.service_dependency import (
-    get_embedding_provider,
+    get_context_builder_service,
     get_retrieval_service,
 )
-from app.presentation.schemas.retrieval_schema import (
-    RetrievalSearchRequest,
-    RetrievalSearchResponse,
+from app.presentation.schemas.context_schema import (
+    ContextBuildRequest,
+    ContextBuildResponse,
 )
 
 
 router = APIRouter(
-    prefix="/api/v1/retrieval",
-    tags=["Retrieval"],
+    prefix="/api/v1/context",
+    tags=["Context"],
 )
 
 
-@router.post("/search", response_model=RetrievalSearchResponse)
-def search_documents(
-    payload: RetrievalSearchRequest,
+@router.post("/build", response_model=ContextBuildResponse)
+def build_context(
+    payload: ContextBuildRequest,
     current_user: UserModel = Depends(get_current_user),
     retrieval_service: IRetrievalService = Depends(get_retrieval_service),
-    provider: IEmbeddingProvider = Depends(get_embedding_provider),
-) -> RetrievalSearchResponse:
+    context_builder: IContextBuilder = Depends(get_context_builder_service),
+) -> ContextBuildResponse:
     document_ids = (
         [str(document_id) for document_id in payload.document_ids]
         if payload.document_ids
         else None
     )
-    results = retrieval_service.search(
+    retrieval_results = retrieval_service.search(
         query=payload.query,
         owner_id=current_user.id,
         top_k=payload.top_k,
         document_ids=document_ids,
     )
-    return RetrievalSearchResponse(
+    context, sources = context_builder.build_context(retrieval_results)
+
+    return ContextBuildResponse(
         query=payload.query,
-        total_results=len(results),
-        embedding_provider=provider.provider_name,
-        results=results,
+        context=context,
+        sources=sources,
+        llm_status="not_configured",
     )

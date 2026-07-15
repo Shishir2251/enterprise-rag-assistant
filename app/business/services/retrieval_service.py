@@ -76,7 +76,8 @@ class RetrievalService(IRetrievalService):
                 owner_id=owner_id,
                 top_k=result_limit,
                 minimum_score=self.minimum_score,
-                document_ids=document_ids,
+                embedding_model=self.embedding_provider.model_name,
+                document_ids=list(document_ids) if document_ids else None,
             )
         except ApplicationError:
             raise

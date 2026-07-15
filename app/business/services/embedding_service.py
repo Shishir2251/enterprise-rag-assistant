@@ -73,6 +73,20 @@ class EmbeddingService(IEmbeddingService):
 
         return embedded_count
 
+    def clear_document_embeddings(
+        self,
+        document_id: str,
+        owner_id: str,
+    ) -> int:
+        document = self.document_repository.get_by_id(
+            document_id=document_id,
+            owner_id=owner_id,
+        )
+        if document is None:
+            raise NotFoundError("Document not found")
+
+        return self.chunk_repository.clear_embeddings(document_id)
+
     def _validate_vectors(
         self,
         vectors: list[list[float]],

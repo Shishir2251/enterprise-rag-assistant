@@ -13,6 +13,7 @@ class IVectorRepository(ABC):
         owner_id: str,
         top_k: int,
         minimum_score: float,
+        embedding_model: str,
         document_ids: Sequence[str] | None = None,
     ) -> list[RetrievalResult]:
         raise NotImplementedError

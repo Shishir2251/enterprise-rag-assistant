@@ -50,3 +50,10 @@ class IDocumentChunkRepository(ABC):
         embedded_at: datetime,
     ) -> None:
         raise NotImplementedError
+
+    @abstractmethod
+    def clear_embeddings(
+        self,
+        document_id: str,
+    ) -> int:
+        raise NotImplementedError

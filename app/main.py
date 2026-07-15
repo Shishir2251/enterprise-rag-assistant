@@ -2,6 +2,9 @@ from fastapi import FastAPI
 
 from app.core.config import settings
 from app.presentation.controllers.auth_controller import router as auth_router
+from app.presentation.controllers.context_controller import (
+    router as context_router,
+)
 from app.presentation.controllers.document_controller import (
     router as document_router,
 )
@@ -24,6 +27,7 @@ app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(document_router)
 app.include_router(retrieval_router)
+app.include_router(context_router)
 
 
 @app.get("/health")

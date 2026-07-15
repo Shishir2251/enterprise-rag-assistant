@@ -4,6 +4,9 @@ from app.business.interfaces.document_service_interface import IDocumentService
 from app.business.interfaces.embedding_service_interface import (
     IEmbeddingService,
 )
+from app.business.interfaces.embedding_provider_interface import (
+    IEmbeddingProvider,
+)
 from app.business.interfaces.ingestion_service_interface import (
     IIngestionService,
 )
@@ -11,6 +14,7 @@ from app.data_access.models.user_model import UserModel
 from app.presentation.dependencies.auth_dependency import get_current_user
 from app.presentation.dependencies.service_dependency import (
     get_document_service,
+    get_embedding_provider,
     get_embedding_service,
     get_ingestion_service,
 )
@@ -21,7 +25,10 @@ from app.presentation.schemas.document_schema import (
     DocumentProcessResponse,
     DocumentResponse,
 )
-from app.presentation.schemas.embedding_schema import DocumentEmbeddingResponse
+from app.presentation.schemas.embedding_schema import (
+    DocumentEmbeddingResetResponse,
+    DocumentEmbeddingResponse,
+)
 
 
 router = APIRouter(
@@ -112,6 +119,7 @@ def embed_document(
     document_id: str,
     current_user: UserModel = Depends(get_current_user),
     embedding_service: IEmbeddingService = Depends(get_embedding_service),
+    provider: IEmbeddingProvider = Depends(get_embedding_provider),
 ) -> DocumentEmbeddingResponse:
     embedded_chunks = embedding_service.embed_document(
         document_id=document_id,
@@ -120,7 +128,29 @@ def embed_document(
     return DocumentEmbeddingResponse(
         document_id=document_id,
         embedded_chunks=embedded_chunks,
-        status="embedded" if embedded_chunks else "already_embedded",
+        status="completed",
+        embedding_provider=provider.provider_name,
+        embedding_model=provider.model_name,
+    )
+
+
+@router.delete(
+    "/{document_id}/embeddings",
+    response_model=DocumentEmbeddingResetResponse,
+)
+def clear_document_embeddings(
+    document_id: str,
+    current_user: UserModel = Depends(get_current_user),
+    embedding_service: IEmbeddingService = Depends(get_embedding_service),
+) -> DocumentEmbeddingResetResponse:
+    cleared_chunks = embedding_service.clear_document_embeddings(
+        document_id=document_id,
+        owner_id=current_user.id,
+    )
+    return DocumentEmbeddingResetResponse(
+        document_id=document_id,
+        cleared_chunks=cleared_chunks,
+        status="cleared",
     )
 
 

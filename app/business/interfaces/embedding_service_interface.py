@@ -10,3 +10,11 @@ class IEmbeddingService(ABC):
         owner_id: str,
     ) -> int:
         raise NotImplementedError
+
+    @abstractmethod
+    def clear_document_embeddings(
+        self,
+        document_id: str,
+        owner_id: str,
+    ) -> int:
+        raise NotImplementedError

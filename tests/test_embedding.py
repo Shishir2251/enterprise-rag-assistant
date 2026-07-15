@@ -1,8 +1,11 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
+import httpx
 from fastapi.testclient import TestClient
+from openai import AuthenticationError as OpenAIAuthenticationError
+from sqlalchemy.dialects import postgresql
 
 from app.business.services.embedding_service import EmbeddingService
 from app.core.exceptions import (
@@ -14,6 +17,9 @@ from app.core.exceptions import (
 )
 from app.data_access.models.document_chunk_model import DocumentChunkModel
 from app.data_access.models.document_model import DocumentModel, DocumentStatus
+from app.data_access.repositories.document_chunk_repository import (
+    DocumentChunkRepository,
+)
 from app.infrastructure.embeddings.openai_embedding_provider import (
     OpenAIEmbeddingProvider,
 )
@@ -95,6 +101,16 @@ class FakeChunkRepository:
             chunk.embedded_at = embedded_at
         self.saved_batches.append(list(chunks))
 
+    def clear_embeddings(self, document_id: str) -> int:
+        cleared_count = 0
+        for chunk in self.chunks:
+            if chunk.document_id == document_id and chunk.embedding is not None:
+                chunk.embedding = None
+                chunk.embedding_model = None
+                chunk.embedded_at = None
+                cleared_count += 1
+        return cleared_count
+
 
 class FakeEmbeddingProvider:
     model_name = "test-embedding-model"
@@ -170,6 +186,37 @@ class EmbeddingProviderTests(unittest.TestCase):
             input=["first", "second"],
             dimensions=3,
         )
+
+    def test_rejected_api_key_returns_safe_configuration_error(self) -> None:
+        client = Mock()
+        response = httpx.Response(
+            status_code=401,
+            request=httpx.Request(
+                "POST",
+                "https://api.openai.com/v1/embeddings",
+            ),
+        )
+        client.embeddings.create.side_effect = OpenAIAuthenticationError(
+            "Incorrect API key",
+            response=response,
+            body={"error": {"code": "invalid_api_key"}},
+        )
+        provider = OpenAIEmbeddingProvider(
+            api_key="sk-proj-test-key",
+            model_name="test-model",
+            dimensions=3,
+            client=client,
+        )
+
+        with patch(
+            "app.infrastructure.embeddings.openai_embedding_provider."
+            "logger.warning"
+        ):
+            with self.assertRaisesRegex(
+                ConfigurationError,
+                "was rejected by OpenAI",
+            ):
+                provider.embed_texts(["content"])
 
     def test_empty_query_is_rejected(self) -> None:
         provider = OpenAIEmbeddingProvider(
@@ -274,6 +321,38 @@ class EmbeddingServiceTests(unittest.TestCase):
             service.embed_document("document-id", "owner-id")
         self.assertEqual(provider.calls, [])
 
+    def test_embeddings_can_be_cleared_and_regenerated(self) -> None:
+        provider = FakeEmbeddingProvider()
+        service, repository = self.make_service(make_chunks(2), provider)
+        self.assertEqual(service.embed_document("document-id", "owner-id"), 2)
+
+        cleared_count = service.clear_document_embeddings(
+            "document-id",
+            "owner-id",
+        )
+
+        self.assertEqual(cleared_count, 2)
+        self.assertTrue(
+            all(
+                chunk.embedding is None
+                and chunk.embedding_model is None
+                and chunk.embedded_at is None
+                for chunk in repository.chunks
+            )
+        )
+        self.assertEqual(service.embed_document("document-id", "owner-id"), 2)
+        self.assertEqual([len(call) for call in provider.calls], [2, 2])
+
+    def test_clear_embeddings_checks_document_ownership(self) -> None:
+        provider = FakeEmbeddingProvider()
+        service, _ = self.make_service(make_chunks(1), provider)
+
+        with self.assertRaises(NotFoundError):
+            service.clear_document_embeddings(
+                "document-id",
+                "different-owner",
+            )
+
 
 class EmbeddingEndpointTests(unittest.TestCase):
     def tearDown(self) -> None:
@@ -328,6 +407,10 @@ class EmbeddingEndpointTests(unittest.TestCase):
             id="owner-id"
         )
         app.dependency_overrides[get_embedding_service] = lambda: embedding_service
+        app.dependency_overrides[get_embedding_provider] = lambda: SimpleNamespace(
+            provider_name="fake",
+            model_name="fake-embedding-v1",
+        )
 
         response = TestClient(app).post(
             "/api/v1/documents/document-id/embed"
@@ -339,9 +422,59 @@ class EmbeddingEndpointTests(unittest.TestCase):
             {
                 "document_id": "document-id",
                 "embedded_chunks": 3,
-                "status": "embedded",
+                "status": "completed",
+                "embedding_provider": "fake",
+                "embedding_model": "fake-embedding-v1",
             },
         )
+        self.assertNotIn("embedding", response.json())
+
+    def test_clear_embeddings_endpoint_returns_count(self) -> None:
+        embedding_service = Mock()
+        embedding_service.clear_document_embeddings.return_value = 3
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            id="owner-id"
+        )
+        app.dependency_overrides[get_embedding_service] = lambda: embedding_service
+
+        response = TestClient(app).delete(
+            "/api/v1/documents/document-id/embeddings"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "document_id": "document-id",
+                "cleared_chunks": 3,
+                "status": "cleared",
+            },
+        )
+
+
+class DocumentChunkRepositoryResetTests(unittest.TestCase):
+    def test_reset_nulls_only_embedding_metadata_for_selected_document(self) -> None:
+        session = Mock()
+        session.execute.return_value.rowcount = 2
+        repository = DocumentChunkRepository(session)
+
+        cleared_count = repository.clear_embeddings("document-id")
+
+        statement = session.execute.call_args.args[0]
+        compiled = statement.compile(dialect=postgresql.dialect())
+        sql = str(compiled)
+        self.assertEqual(cleared_count, 2)
+        self.assertIn("UPDATE document_chunks SET", sql)
+        self.assertIn("embedding=", sql)
+        self.assertIn("embedding_model=", sql)
+        self.assertIn("embedded_at=", sql)
+        self.assertIn("document_chunks.document_id =", sql)
+        self.assertNotIn("DELETE", sql)
+        self.assertEqual(compiled.params["document_id_1"], "document-id")
+        self.assertIsNone(compiled.params["embedding"])
+        self.assertIsNone(compiled.params["embedding_model"])
+        self.assertIsNone(compiled.params["embedded_at"])
+        session.commit.assert_called_once_with()
 
 
 if __name__ == "__main__":
