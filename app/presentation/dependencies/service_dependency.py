@@ -2,6 +2,7 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from app.business.interfaces.auth_service_interface import IAuthService
+from app.business.interfaces.chat_service_interface import IChatService
 from app.business.interfaces.context_builder_interface import IContextBuilder
 from app.business.interfaces.document_service_interface import IDocumentService
 from app.business.interfaces.embedding_service_interface import (
@@ -12,10 +13,12 @@ from app.business.interfaces.embedding_provider_interface import (
 )
 from app.business.interfaces.file_storage_interface import IFileStorage
 from app.business.interfaces.ingestion_service_interface import IIngestionService
+from app.business.interfaces.llm_provider_interface import ILLMProvider
 from app.business.interfaces.retrieval_service_interface import (
     IRetrievalService,
 )
 from app.business.services.auth_service import AuthService
+from app.business.services.chat_service import ChatService
 from app.business.services.chunking_service import ChunkingService
 from app.business.services.context_builder_service import ContextBuilderService
 from app.business.services.document_service import DocumentService
@@ -23,6 +26,12 @@ from app.business.services.embedding_service import EmbeddingService
 from app.business.services.ingestion_service import IngestionService
 from app.business.services.retrieval_service import RetrievalService
 from app.core.config import settings
+from app.data_access.interfaces.chat_message_repository_interface import (
+    IChatMessageRepository,
+)
+from app.data_access.interfaces.chat_session_repository_interface import (
+    IChatSessionRepository,
+)
 from app.data_access.interfaces.document_chunk_repository_interface import (
     IDocumentChunkRepository,
 )
@@ -32,6 +41,12 @@ from app.data_access.interfaces.document_repository_interface import (
 from app.data_access.interfaces.user_repository_interface import IUserRepository
 from app.data_access.interfaces.vector_repository_interface import (
     IVectorRepository,
+)
+from app.data_access.repositories.chat_message_repository import (
+    ChatMessageRepository,
+)
+from app.data_access.repositories.chat_session_repository import (
+    ChatSessionRepository,
 )
 from app.data_access.repositories.document_chunk_repository import (
     DocumentChunkRepository,
@@ -46,6 +61,7 @@ from app.infrastructure.embeddings.embedding_provider_factory import (
 from app.infrastructure.file_storage.local_storage_provider import (
     LocalStorageProvider,
 )
+from app.infrastructure.llm.llm_provider_factory import create_llm_provider
 from app.infrastructure.text_extraction.text_extractor_factory import (
     TextExtractorFactory,
 )
@@ -75,12 +91,28 @@ def get_vector_repository(
     return PgVectorRepository(db)
 
 
+def get_chat_session_repository(
+    db: Session = Depends(get_db),
+) -> IChatSessionRepository:
+    return ChatSessionRepository(db)
+
+
+def get_chat_message_repository(
+    db: Session = Depends(get_db),
+) -> IChatMessageRepository:
+    return ChatMessageRepository(db)
+
+
 def get_file_storage() -> IFileStorage:
     return LocalStorageProvider()
 
 
 def get_embedding_provider() -> IEmbeddingProvider:
     return create_embedding_provider(settings)
+
+
+def get_llm_provider() -> ILLMProvider:
+    return create_llm_provider(settings)
 
 
 def get_auth_service(
@@ -149,3 +181,23 @@ def get_retrieval_service(
 
 def get_context_builder_service() -> IContextBuilder:
     return ContextBuilderService()
+
+
+def get_chat_service(
+    session_repository: IChatSessionRepository = Depends(
+        get_chat_session_repository
+    ),
+    message_repository: IChatMessageRepository = Depends(
+        get_chat_message_repository
+    ),
+    retrieval_service: IRetrievalService = Depends(get_retrieval_service),
+    context_builder: IContextBuilder = Depends(get_context_builder_service),
+    llm_provider: ILLMProvider = Depends(get_llm_provider),
+) -> IChatService:
+    return ChatService(
+        session_repository=session_repository,
+        message_repository=message_repository,
+        retrieval_service=retrieval_service,
+        context_builder=context_builder,
+        llm_provider=llm_provider,
+    )

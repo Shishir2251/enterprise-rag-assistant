@@ -65,6 +65,36 @@ Open Swagger at `/docs`, authorize with the JWT returned by login, then:
 `POST /api/v1/context/build` returns retrieved source context and
 `llm_status=not_configured`; it does not call an LLM or fabricate an answer.
 
+## Chat scaffolding
+
+Chat sessions and conversation messages are persisted in PostgreSQL. The
+default configuration is:
+
+```env
+LLM_PROVIDER=none
+```
+
+In this mode, sending a chat message still uses the owner-scoped
+`RetrievalService` and `ContextBuilderService`, and returns retrieved citation
+metadata. It deliberately returns:
+
+```json
+{
+  "status": "llm_not_configured",
+  "answer": null
+}
+```
+
+The user message is persisted before retrieval. No assistant message is
+persisted unless a configured provider returns a real, non-empty answer.
+
+Chat API flow:
+
+1. `POST /api/v1/chat/sessions`
+2. `POST /api/v1/chat/sessions/{session_id}/messages`
+3. `GET /api/v1/chat/sessions/{session_id}/messages`
+4. `GET /api/v1/chat/sessions`
+
 To remove vectors without deleting chunks, call:
 
 ```http

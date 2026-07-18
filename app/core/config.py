@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     EMBEDDING_BATCH_SIZE: int = Field(default=50, gt=0)
     RETRIEVAL_TOP_K: int = Field(default=5, gt=0)
     RETRIEVAL_MIN_SCORE: float = Field(default=0.30, ge=0.0, le=1.0)
+    LLM_PROVIDER: str = "none"
 
     REDIS_URL: str = ""
     UPLOAD_DIR: str = "uploads"

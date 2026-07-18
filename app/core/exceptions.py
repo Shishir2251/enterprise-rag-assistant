@@ -42,5 +42,9 @@ class RetrievalError(ApplicationError):
     """Raised when retrieval infrastructure cannot complete a search."""
 
 
+class LLMError(ApplicationError):
+    """Raised when an LLM provider returns an invalid result."""
+
+
 class ConfigurationError(ApplicationError):
     """Raised when a required application integration is not configured."""
