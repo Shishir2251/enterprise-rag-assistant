@@ -193,7 +193,8 @@ def get_retrieval_service(
     return RetrievalService(
         vector_repository=vector_repository,
         embedding_provider=provider,
-        default_top_k=settings.RETRIEVAL_TOP_K,
+        default_top_k=settings.RETRIEVAL_TOP_K_DEFAULT,
+        maximum_top_k=settings.RETRIEVAL_TOP_K_MAX,
         minimum_score=settings.RETRIEVAL_MIN_SCORE,
     )
 

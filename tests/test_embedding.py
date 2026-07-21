@@ -90,29 +90,55 @@ class FakeChunkRepository:
             if chunk.document_id == document_id and chunk.embedding is None
         ]
 
+    def list_stale_embeddings(
+        self,
+        document_id: str,
+        model_name: str,
+        provider_name: str,
+    ) -> list[DocumentChunkModel]:
+        return [
+            chunk
+            for chunk in self.chunks
+            if chunk.document_id == document_id
+            and (
+                chunk.embedding is None
+                or chunk.embedding_model != model_name
+                or chunk.embedding_provider != provider_name
+            )
+        ]
+
     def save_embeddings(
         self,
         chunks: list[DocumentChunkModel],
         model_name: str,
+        provider_name: str,
         embedded_at,
     ) -> None:
         for chunk in chunks:
             chunk.embedding_model = model_name
+            chunk.embedding_provider = provider_name
             chunk.embedded_at = embedded_at
         self.saved_batches.append(list(chunks))
 
     def clear_embeddings(self, document_id: str) -> int:
         cleared_count = 0
         for chunk in self.chunks:
-            if chunk.document_id == document_id and chunk.embedding is not None:
+            if chunk.document_id == document_id and (
+                chunk.embedding is not None
+                or chunk.embedding_model is not None
+                or chunk.embedding_provider is not None
+                or chunk.embedded_at is not None
+            ):
                 chunk.embedding = None
                 chunk.embedding_model = None
+                chunk.embedding_provider = None
                 chunk.embedded_at = None
                 cleared_count += 1
         return cleared_count
 
 
 class FakeEmbeddingProvider:
+    provider_name = "test-provider"
     model_name = "test-embedding-model"
 
     def __init__(
@@ -266,10 +292,12 @@ class EmbeddingServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(EmbeddingError, "dimension"):
             service.embed_document("document-id", "owner-id")
 
-    def test_no_unembedded_chunks_returns_zero_without_provider_call(self) -> None:
+    def test_no_stale_chunks_returns_zero_without_provider_call(self) -> None:
         chunks = make_chunks(1)
         chunks[0].embedding = [0.0, 0.0, 0.0]
         provider = FakeEmbeddingProvider()
+        chunks[0].embedding_model = provider.model_name
+        chunks[0].embedding_provider = provider.provider_name
         service, _ = self.make_service(chunks, provider)
 
         self.assertEqual(
@@ -277,6 +305,33 @@ class EmbeddingServiceTests(unittest.TestCase):
             0,
         )
         self.assertEqual(provider.calls, [])
+
+    def test_model_or_provider_mismatch_is_reembedded(self) -> None:
+        for stale_field in ("model", "provider"):
+            with self.subTest(stale_field=stale_field):
+                chunks = make_chunks(1)
+                chunks[0].embedding = [0.0, 0.0, 0.0]
+                provider = FakeEmbeddingProvider()
+                chunks[0].embedding_model = provider.model_name
+                chunks[0].embedding_provider = provider.provider_name
+                if stale_field == "model":
+                    chunks[0].embedding_model = "legacy-model"
+                else:
+                    chunks[0].embedding_provider = "legacy-provider"
+                service, repository = self.make_service(chunks, provider)
+
+                self.assertEqual(
+                    service.embed_document("document-id", "owner-id"),
+                    1,
+                )
+                self.assertEqual(
+                    repository.chunks[0].embedding_model,
+                    provider.model_name,
+                )
+                self.assertEqual(
+                    repository.chunks[0].embedding_provider,
+                    provider.provider_name,
+                )
 
     def test_successful_batch_embedding_and_second_call_is_idempotent(self) -> None:
         provider = FakeEmbeddingProvider()
@@ -297,6 +352,7 @@ class EmbeddingServiceTests(unittest.TestCase):
         self.assertTrue(
             all(
                 chunk.embedding_model == provider.model_name
+                and chunk.embedding_provider == provider.provider_name
                 for chunk in repository.chunks
             )
         )
@@ -336,12 +392,42 @@ class EmbeddingServiceTests(unittest.TestCase):
             all(
                 chunk.embedding is None
                 and chunk.embedding_model is None
+                and chunk.embedding_provider is None
                 and chunk.embedded_at is None
                 for chunk in repository.chunks
             )
         )
         self.assertEqual(service.embed_document("document-id", "owner-id"), 2)
         self.assertEqual([len(call) for call in provider.calls], [2, 2])
+
+    def test_reindex_replaces_embeddings_without_duplicating_chunks(self) -> None:
+        chunks = make_chunks(2)
+        original_chunk_ids = [chunk.id for chunk in chunks]
+        provider = FakeEmbeddingProvider()
+        service, repository = self.make_service(chunks, provider)
+
+        first_count = service.reindex_document_chunks(
+            "document-id",
+            "owner-id",
+        )
+        second_count = service.reindex_document_chunks(
+            "document-id",
+            "owner-id",
+        )
+
+        self.assertEqual((first_count, second_count), (2, 2))
+        self.assertEqual(
+            [chunk.id for chunk in repository.chunks],
+            original_chunk_ids,
+        )
+        self.assertEqual(len(repository.chunks), 2)
+        self.assertTrue(
+            all(
+                chunk.embedding_model == provider.model_name
+                and chunk.embedding_provider == provider.provider_name
+                for chunk in repository.chunks
+            )
+        )
 
     def test_clear_embeddings_checks_document_ownership(self) -> None:
         provider = FakeEmbeddingProvider()
@@ -467,12 +553,14 @@ class DocumentChunkRepositoryResetTests(unittest.TestCase):
         self.assertIn("UPDATE document_chunks SET", sql)
         self.assertIn("embedding=", sql)
         self.assertIn("embedding_model=", sql)
+        self.assertIn("embedding_provider=", sql)
         self.assertIn("embedded_at=", sql)
         self.assertIn("document_chunks.document_id =", sql)
         self.assertNotIn("DELETE", sql)
         self.assertEqual(compiled.params["document_id_1"], "document-id")
         self.assertIsNone(compiled.params["embedding"])
         self.assertIsNone(compiled.params["embedding_model"])
+        self.assertIsNone(compiled.params["embedding_provider"])
         self.assertIsNone(compiled.params["embedded_at"])
         session.commit.assert_called_once_with()
 

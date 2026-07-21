@@ -1,6 +1,12 @@
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,8 +25,24 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: SecretStr | None = None
     EMBEDDING_PROVIDER: str = "fake"
     EMBEDDING_MODEL: str = "fake-embedding-v1"
-    EMBEDDING_DIMENSION: int = Field(default=1536, gt=0)
+    EMBEDDING_DIMENSION: int = Field(default=384, gt=0)
     EMBEDDING_BATCH_SIZE: int = Field(default=50, gt=0)
+    LOCAL_EMBEDDING_MODEL: str = (
+        "sentence-transformers/all-MiniLM-L6-v2"
+    )
+    LOCAL_EMBEDDING_BATCH_SIZE: int = Field(default=32, gt=0)
+    LOCAL_EMBEDDING_DEVICE: str = "cpu"
+    RETRIEVAL_TOP_K_DEFAULT: int = Field(
+        default=5,
+        gt=0,
+        validation_alias=AliasChoices(
+            "RETRIEVAL_TOP_K_DEFAULT",
+            "RETRIEVAL_TOP_K",
+        ),
+    )
+    RETRIEVAL_TOP_K_MAX: int = Field(default=20, gt=0)
+    # Kept for compatibility with callers that have not moved to
+    # RETRIEVAL_TOP_K_DEFAULT yet.
     RETRIEVAL_TOP_K: int = Field(default=5, gt=0)
     RETRIEVAL_MIN_SCORE: float = Field(default=0.30, ge=0.0, le=1.0)
     LLM_PROVIDER: str = "disabled"
@@ -57,8 +79,24 @@ class Settings(BaseSettings):
             raise ValueError("DATABASE_URL must use the postgresql:// scheme")
         return value
 
+    @field_validator(
+        "LOCAL_EMBEDDING_MODEL",
+        "LOCAL_EMBEDDING_DEVICE",
+    )
+    @classmethod
+    def validate_local_embedding_string(cls, value: str) -> str:
+        normalized_value = value.strip()
+        if not normalized_value:
+            raise ValueError("Local embedding settings must not be empty")
+        return normalized_value
+
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
+        if self.RETRIEVAL_TOP_K_DEFAULT > self.RETRIEVAL_TOP_K_MAX:
+            raise ValueError(
+                "RETRIEVAL_TOP_K_DEFAULT must not exceed "
+                "RETRIEVAL_TOP_K_MAX"
+            )
         if self.APP_ENV.lower() == "production":
             if self.APP_DEBUG:
                 raise ValueError("APP_DEBUG must be false in production")

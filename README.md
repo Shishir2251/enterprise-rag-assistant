@@ -3,34 +3,54 @@
 FastAPI backend for owner-scoped document ingestion, chunking, pgvector
 storage, embedding, retrieval, and grounded RAG answer generation.
 
-## Development embeddings
+## Local semantic embeddings
 
 The application supports configuration-based embedding providers:
 
 - `EMBEDDING_PROVIDER=fake` uses deterministic, normalized hash vectors. It
-  requires no API key or network request and is intended only for local
-  development, tests, and end-to-end pipeline validation.
+  requires no API key and is intended for fast architecture tests.
+- `EMBEDDING_PROVIDER=local` uses
+  `sentence-transformers/all-MiniLM-L6-v2` on CPU. It produces real semantic,
+  normalized 384-dimensional vectors without an API key.
 - `EMBEDDING_PROVIDER=openai` uses the configured OpenAI embedding model and is
-  the production setting.
+  preserved for a later cloud deployment.
 
 Fake embeddings have limited lexical retrieval quality. They are not
 production-quality semantic embeddings and should not be used to benchmark
 retrieval relevance.
 
 Chunks embedded by different providers or models must not be mixed. Retrieval
-filters chunks by the active `EMBEDDING_MODEL`. Before changing providers or
-models, clear the document's old embeddings and regenerate them.
+filters chunks by both the active provider and model. Missing embeddings and
+model/provider mismatches are treated as stale and regenerated.
 
-## Fake-mode environment
+Install the local provider dependency:
+
+```powershell
+pip install sentence-transformers
+```
+
+The first use may download the configured model. Later runs try the local
+SentenceTransformers cache first and can run without a network connection.
+On managed Windows machines, organization Application Control must permit the
+native wheels used by SentenceTransformers (for example PyTorch and `regex`).
+If policy blocks one of those DLLs, ask the administrator to approve the
+project environment; do not bypass the policy.
+
+## Local-mode environment
 
 ```env
-EMBEDDING_PROVIDER=fake
-EMBEDDING_MODEL=fake-embedding-v1
-EMBEDDING_DIMENSION=1536
+EMBEDDING_PROVIDER=local
+EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+EMBEDDING_DIMENSION=384
 EMBEDDING_BATCH_SIZE=50
+LOCAL_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+LOCAL_EMBEDDING_BATCH_SIZE=32
+LOCAL_EMBEDDING_DEVICE=cpu
 OPENAI_API_KEY=
-RETRIEVAL_TOP_K=5
-RETRIEVAL_MIN_SCORE=0.30
+RETRIEVAL_TOP_K_DEFAULT=5
+RETRIEVAL_TOP_K_MAX=20
+RETRIEVAL_MIN_SCORE=0.25
+LLM_PROVIDER=disabled
 ```
 
 Keep the existing database, JWT, Redis, and upload settings. Copy
@@ -46,7 +66,16 @@ database/JWT values.
 Apply all database migrations:
 
 ```powershell
-.\venv\Scripts\python.exe -m alembic upgrade head
+alembic upgrade head
+```
+
+The Phase 8 migration clears only disposable embedding values and their
+model/provider timestamps before changing `document_chunks.embedding` from
+`vector(1536)` to `vector(384)`. Documents, extracted text, and chunk rows are
+preserved. Reindex existing ready documents afterward:
+
+```powershell
+python -m app.scripts.reindex_embeddings
 ```
 
 ## Automatic document processing
@@ -66,13 +95,13 @@ docker compose up -d redis
 Terminal 2 (Windows):
 
 ```powershell
-.\venv\Scripts\python.exe -m celery -A app.infrastructure.queue.celery_app.celery_app worker --loglevel=info --pool=solo
+celery -A app.infrastructure.queue.celery_app.celery_app worker --loglevel=info --pool=solo
 ```
 
 Terminal 3:
 
 ```powershell
-.\venv\Scripts\python.exe -m uvicorn app.main:app --reload
+uvicorn app.main:app --reload
 ```
 
 Required queue configuration:
@@ -94,6 +123,32 @@ CELERY_TASK_ALWAYS_EAGER=True
 CELERY_TASK_EAGER_PROPAGATES=True
 ```
 
+The default suite excludes the real-model integration marker so it remains
+fast and does not download a model:
+
+```powershell
+python -m pytest -v
+python -m pytest --cov=app --cov-report=term-missing
+```
+
+Run the two real semantic-ranking cases separately (the first run may download
+the model):
+
+```powershell
+python -m pytest -m integration -v
+```
+
+Evaluate labelled retrieval cases for an existing owner without changing any
+threshold automatically:
+
+```powershell
+python -m app.scripts.evaluate_retrieval --owner-id <owner-id>
+```
+
+The report prints Total cases, Hit@1, Hit@3, Hit@5, MRR, Average relevant
+score, and a calibration recommendation. The fixture is synthetic; replace
+its optional document IDs with IDs from your own synthetic development data.
+
 ## Development API flow
 
 Open Swagger at `/docs`, authorize with the JWT returned by login, then:
@@ -110,6 +165,13 @@ Failed documents can be queued again with:
 
 ```http
 POST /api/v1/documents/{document_id}/retry
+```
+
+Ready documents can be queued for embeddings-only reindexing without
+re-extraction or chunk replacement:
+
+```http
+POST /api/v1/documents/{document_id}/reindex
 ```
 
 The synchronous `/process` and `/embed` routes remain available as deprecated
@@ -213,25 +275,64 @@ To remove vectors without deleting chunks, call:
 DELETE /api/v1/documents/{document_id}/embeddings
 ```
 
+## Exact local semantic retrieval test flow
+
+1. Set `EMBEDDING_PROVIDER=local`.
+2. Set `EMBEDDING_DIMENSION=384`.
+3. Run `alembic upgrade head`.
+4. Start Redis with `docker compose up -d redis`.
+5. Start the Celery worker with
+   `celery -A app.infrastructure.queue.celery_app.celery_app worker --loglevel=info --pool=solo`.
+6. Start FastAPI with `uvicorn app.main:app --reload`.
+7. Log in and authorize Swagger with the returned JWT.
+8. Upload a new PDF, DOCX, or TXT document.
+9. Poll its status until `status=ready`.
+10. Verify its chunks report the active local embedding model/provider metadata
+    through a database/admin inspection; API responses never expose vectors.
+11. Call retrieval with a semantically related question.
+12. Verify the relevant chunk ranks near the top.
+13. Ask a semantically unrelated query.
+14. Verify its score is lower or the result is filtered by the configured
+    threshold.
+15. Test `POST /api/v1/context/build` with the related question.
+16. Chat may still return `llm_not_configured` because
+    `LLM_PROVIDER=disabled`.
+
 ## Switching to OpenAI
 
-1. While fake mode is active, clear embeddings for every document that will be
-   re-embedded.
-2. Set:
+The current schema intentionally has one fixed dimension: 384. Do not switch
+only the environment variables; a 1536-dimensional OpenAI vector cannot be
+inserted into `vector(384)`.
+
+1. Stop FastAPI and all Celery workers.
+2. Change the ORM vector declaration to `Vector(1536)` and create a new forward
+   Alembic revision. In that revision, set `embedding`, `embedding_model`,
+   `embedding_provider`, and `embedded_at` to `NULL`, then alter the column to
+   `extensions.vector(1536)`. Keep the provider metadata column.
+3. Apply that forward revision with `alembic upgrade head`. Documents and chunk
+   text remain intact; only disposable embeddings are reset.
+4. Set:
 
    ```env
    EMBEDDING_PROVIDER=openai
    EMBEDDING_MODEL=text-embedding-3-small
    EMBEDDING_DIMENSION=1536
-   OPENAI_API_KEY=your_key
+   OPENAI_API_KEY=<real-key>
    ```
 
-3. Restart the API.
-4. Call the document embed endpoint again for each cleared document.
-5. Verify retrieval; model filtering prevents old fake vectors from being
-   compared with OpenAI query vectors.
+5. Run `python -m app.scripts.reindex_embeddings`.
+6. Restart FastAPI and Celery, then verify retrieval. Provider/model filtering
+   excludes anything not produced by the active configuration.
+
+For a full Phase 8 schema-and-code rollback, the migration downgrade command is
+`alembic downgrade d4a6f21c8b90`; it also clears embeddings and restores
+`vector(1536)`. Do not run that downgrade while using the current Phase 8 code,
+because the downgraded schema removes `embedding_provider`.
+
+A future multi-provider deployment may use separate provider-specific vector
+tables or another fixed-dimension strategy. This phase deliberately keeps one
+fixed vector column and does not implement that redesign.
 
 Embedding and LLM providers are configured independently. OpenAI answer
-generation does not require changing `EMBEDDING_PROVIDER`; fake embeddings can
-exercise the architecture locally, but they are not a measure of semantic
-retrieval quality.
+generation does not require changing `EMBEDDING_PROVIDER`; keep
+`LLM_PROVIDER=disabled` until a working generation provider is configured.

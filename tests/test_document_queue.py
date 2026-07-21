@@ -12,6 +12,7 @@ from sqlalchemy.dialects import postgresql
 from starlette.datastructures import Headers
 
 from app.business.services.document_service import DocumentService
+from app.business.services.embedding_service import EmbeddingService
 from app.core.config import settings
 from app.core.exceptions import (
     ConflictError,
@@ -25,6 +26,9 @@ from app.infrastructure.queue.celery_document_processing_queue import (
     CeleryDocumentProcessingQueue,
 )
 from app.infrastructure.queue.celery_app import celery_app
+from app.infrastructure.embeddings.embedding_provider_factory import (
+    create_embedding_provider,
+)
 from app.infrastructure.queue.task_dependencies import (
     DocumentTaskDependencies,
 )
@@ -80,6 +84,22 @@ class QueueAdapterTests(unittest.TestCase):
         self.assertEqual(task_id, "celery-task-id")
         apply_async.assert_called_once_with(args=["document-id"])
 
+    def test_reindex_queue_uses_embeddings_only_task_mode(self) -> None:
+        with patch(
+            "app.infrastructure.queue.celery_document_processing_queue."
+            "process_document_task.apply_async",
+            return_value=SimpleNamespace(id="reindex-task-id"),
+        ) as apply_async:
+            task_id = CeleryDocumentProcessingQueue().enqueue_reindex(
+                "document-id"
+            )
+
+        self.assertEqual(task_id, "reindex-task-id")
+        apply_async.assert_called_once_with(
+            args=["document-id"],
+            kwargs={"reindex_embeddings": True},
+        )
+
 
 class DocumentRepositoryScopeTests(unittest.TestCase):
     def test_public_lookup_is_owner_scoped_but_worker_lookup_is_internal(
@@ -102,6 +122,32 @@ class DocumentRepositoryScopeTests(unittest.TestCase):
 
         self.assertIn("documents.owner_id =", public_sql)
         self.assertNotIn("documents.owner_id =", internal_sql)
+
+    def test_reindex_claim_is_atomic_owner_scoped_and_ready_only(self) -> None:
+        db = Mock()
+        claimed_document = make_document(DocumentStatus.QUEUED.value)
+        db.scalar.return_value = claimed_document
+        repository = DocumentRepository(db)
+
+        result = repository.claim_ready_for_reindex(
+            "document-id",
+            "owner-id",
+        )
+
+        statement = db.scalar.call_args.args[0]
+        compiled = statement.compile(dialect=postgresql.dialect())
+        sql = str(compiled)
+        self.assertIs(result, claimed_document)
+        self.assertIn("UPDATE documents SET", sql)
+        self.assertIn("documents.owner_id =", sql)
+        self.assertIn("documents.status IN", sql)
+        self.assertIn("RETURNING documents.id", sql)
+        self.assertIn(
+            ["ready", "completed"],
+            compiled.params.values(),
+        )
+        db.commit.assert_called_once_with()
+        db.refresh.assert_called_once_with(claimed_document)
 
 
 class DocumentAsyncServiceTests(unittest.TestCase):
@@ -131,8 +177,26 @@ class DocumentAsyncServiceTests(unittest.TestCase):
             document.task_id = task_id
             return document
 
+        def claim_ready_for_reindex(document_id, owner_id):
+            self.assertEqual(document_id, "document-id")
+            self.assertEqual(owner_id, "owner-id")
+            if document.status not in DocumentStatus.process_complete_values():
+                return None
+            return mark_queued(document_id)
+
+        def mark_ready(document_id):
+            self.assertEqual(document_id, "document-id")
+            document.status = DocumentStatus.READY.value
+            document.progress = 100
+            document.current_step = "completed"
+            return document
+
         repository.create.side_effect = create
         repository.mark_queued.side_effect = mark_queued
+        repository.claim_ready_for_reindex.side_effect = (
+            claim_ready_for_reindex
+        )
+        repository.mark_ready.side_effect = mark_ready
         repository.set_task_id.side_effect = set_task_id
         repository.get_by_id.return_value = document
         repository.mark_failed.return_value = document
@@ -144,6 +208,7 @@ class DocumentAsyncServiceTests(unittest.TestCase):
         )
         processing_queue = queue or Mock()
         processing_queue.enqueue.return_value = "task-id"
+        processing_queue.enqueue_reindex.return_value = "reindex-task-id"
         service = DocumentService(
             document_repository=repository,
             file_storage=storage,
@@ -204,6 +269,57 @@ class DocumentAsyncServiceTests(unittest.TestCase):
 
         queue.enqueue.assert_not_called()
 
+    def test_ready_document_can_be_queued_for_reindex(self) -> None:
+        service, document, repository, _, queue = self.make_service()
+        document.status = DocumentStatus.READY.value
+
+        result = service.reindex_document("document-id", "owner-id")
+
+        self.assertEqual(result.status, DocumentStatus.QUEUED.value)
+        self.assertEqual(result.task_id, "reindex-task-id")
+        repository.claim_ready_for_reindex.assert_called_once_with(
+            document_id="document-id",
+            owner_id="owner-id",
+        )
+        queue.enqueue_reindex.assert_called_once_with("document-id")
+
+    def test_reindex_requires_ready_document(self) -> None:
+        service, document, _, _, queue = self.make_service()
+        document.status = DocumentStatus.PROCESSING.value
+
+        with self.assertRaises(ConflictError):
+            service.reindex_document("document-id", "owner-id")
+
+        queue.enqueue_reindex.assert_not_called()
+
+    def test_reindex_queue_failure_restores_ready_document(self) -> None:
+        queue = Mock()
+        queue.enqueue_reindex.side_effect = ConnectionError(
+            "redis://user:secret@internal"
+        )
+        service, document, repository, _, _ = self.make_service(queue)
+        document.status = DocumentStatus.READY.value
+
+        with patch(
+            "app.business.services.document_service.logger.exception"
+        ):
+            with self.assertRaises(QueueUnavailableError):
+                service.reindex_document("document-id", "owner-id")
+
+        repository.mark_ready.assert_called_once_with("document-id")
+        repository.mark_failed.assert_not_called()
+        self.assertEqual(document.status, DocumentStatus.READY.value)
+
+    def test_reindex_is_owner_scoped(self) -> None:
+        service, document, repository, _, queue = self.make_service()
+        document.status = DocumentStatus.READY.value
+        repository.get_by_id.return_value = None
+
+        with self.assertRaises(NotFoundError):
+            service.reindex_document("document-id", "another-owner")
+
+        queue.enqueue_reindex.assert_not_called()
+
 
 class FakeTaskDocumentRepository:
     def __init__(self, document) -> None:
@@ -213,6 +329,15 @@ class FakeTaskDocumentRepository:
     def get_by_id_internal(self, document_id: str):
         self.calls.append(("get_internal", document_id))
         return self.document
+
+    def get_by_id(self, document_id: str, owner_id: str):
+        if (
+            self.document is not None
+            and self.document.id == document_id
+            and self.document.owner_id == owner_id
+        ):
+            return self.document
+        return None
 
     def set_task_id(self, document_id: str, task_id: str):
         self.document.task_id = task_id
@@ -327,7 +452,12 @@ class DocumentTaskTests(unittest.TestCase):
 
         return context
 
-    def run_task(self, dependencies, retries: int = 0):
+    def run_task(
+        self,
+        dependencies,
+        retries: int = 0,
+        reindex_embeddings: bool = False,
+    ):
         context = self.dependency_context(dependencies)
         with patch(
             "app.infrastructure.queue.tasks.document_tasks."
@@ -339,7 +469,10 @@ class DocumentTaskTests(unittest.TestCase):
                 retries=retries,
             )
             try:
-                return process_document_task.run("document-id")
+                return process_document_task.run(
+                    "document-id",
+                    reindex_embeddings=reindex_embeddings,
+                )
             finally:
                 process_document_task.pop_request()
 
@@ -479,6 +612,82 @@ class DocumentTaskTests(unittest.TestCase):
             any(call[0] == "mark_processing" for call in repository.calls)
         )
 
+    def test_reindex_only_replaces_embeddings_and_preserves_chunks(self) -> None:
+        (
+            dependencies,
+            document,
+            repository,
+            chunk_repository,
+            ingestion_service,
+            embedding_service,
+        ) = self.make_dependencies()
+        original_chunks = chunk_repository.list_by_document.return_value
+        original_ids = [id(chunk) for chunk in original_chunks]
+        embedding_service.reindex_document_chunks.return_value = 2
+
+        result = self.run_task(
+            dependencies,
+            reindex_embeddings=True,
+        )
+
+        self.assertEqual(result["status"], DocumentStatus.READY.value)
+        self.assertEqual(result["chunks_processed"], 2)
+        self.assertEqual(result["chunks_embedded"], 2)
+        self.assertEqual(
+            [id(chunk) for chunk in chunk_repository.list_by_document.return_value],
+            original_ids,
+        )
+        self.assertEqual(document.status, DocumentStatus.READY.value)
+        ingestion_service.ingest_document.assert_not_called()
+        embedding_service.embed_document_chunks.assert_not_called()
+        embedding_service.reindex_document_chunks.assert_called_once_with(
+            document_id="document-id",
+            owner_id="owner-id",
+        )
+        self.assertIn(
+            ("progress", "document-id", 20, "reindexing_embeddings"),
+            repository.calls,
+        )
+
+    def test_duplicate_reindex_task_does_not_reembed_or_duplicate_chunks(
+        self,
+    ) -> None:
+        dependencies, document, repository, _, ingestion, embedding = (
+            self.make_dependencies(status=DocumentStatus.READY.value)
+        )
+        document.task_id = "task-id"
+
+        result = self.run_task(
+            dependencies,
+            reindex_embeddings=True,
+        )
+
+        self.assertEqual(result["status"], DocumentStatus.READY.value)
+        ingestion.ingest_document.assert_not_called()
+        embedding.reindex_document_chunks.assert_not_called()
+        self.assertFalse(
+            any(call[0] == "mark_processing" for call in repository.calls)
+        )
+
+    def test_superseded_reindex_task_does_not_overwrite_newer_task(self) -> None:
+        dependencies, document, repository, _, ingestion, embedding = (
+            self.make_dependencies(status=DocumentStatus.QUEUED.value)
+        )
+        document.task_id = "newer-task-id"
+
+        result = self.run_task(
+            dependencies,
+            reindex_embeddings=True,
+        )
+
+        self.assertEqual(result["status"], DocumentStatus.QUEUED.value)
+        self.assertEqual(document.task_id, "newer-task-id")
+        ingestion.ingest_document.assert_not_called()
+        embedding.reindex_document_chunks.assert_not_called()
+        self.assertFalse(
+            any(call[0] == "set_task_id" for call in repository.calls)
+        )
+
     def test_celery_eager_mode_runs_without_live_redis(self) -> None:
         dependencies, _, _, _, _, _ = self.make_dependencies()
         context = self.dependency_context(dependencies)
@@ -497,6 +706,99 @@ class DocumentTaskTests(unittest.TestCase):
             celery_app.conf.task_always_eager = previous_eager
 
         self.assertEqual(result["status"], "ready")
+
+    def test_celery_eager_mode_uses_local_embeddings_without_openai(
+        self,
+    ) -> None:
+        dependencies, document, repository, chunk_repository, ingestion, _ = (
+            self.make_dependencies()
+        )
+        chunks = [
+            SimpleNamespace(
+                content="The World Cup starts in June.",
+                embedding=None,
+                embedding_model=None,
+                embedding_provider=None,
+            ),
+            SimpleNamespace(
+                content="The patient was diagnosed with sinusitis.",
+                embedding=None,
+                embedding_model=None,
+                embedding_provider=None,
+            ),
+        ]
+        chunk_repository.list_by_document.return_value = chunks
+        chunk_repository.list_stale_embeddings.side_effect = (
+            lambda **kwargs: [
+                chunk
+                for chunk in chunks
+                if chunk.embedding is None
+                or chunk.embedding_model != kwargs["model_name"]
+                or chunk.embedding_provider != kwargs["provider_name"]
+            ]
+        )
+
+        def save_embeddings(**kwargs):
+            for chunk in kwargs["chunks"]:
+                chunk.embedding_model = kwargs["model_name"]
+                chunk.embedding_provider = kwargs["provider_name"]
+
+        chunk_repository.save_embeddings.side_effect = save_embeddings
+        local_model = Mock()
+        local_model.get_sentence_embedding_dimension.return_value = 384
+        local_model.encode.side_effect = lambda texts, **kwargs: [
+            [1.0] + [0.0] * 383 for _ in texts
+        ]
+
+        with (
+            patch(
+                "app.infrastructure.embeddings.local_embedding_provider."
+                "_load_sentence_transformer",
+                return_value=local_model,
+            ),
+            patch(
+                "app.infrastructure.embeddings.openai_embedding_provider."
+                "OpenAIEmbeddingProvider"
+            ) as openai_provider,
+        ):
+            provider = create_embedding_provider(settings)
+            dependencies = DocumentTaskDependencies(
+                session=dependencies.session,
+                document_repository=repository,
+                chunk_repository=chunk_repository,
+                ingestion_service=ingestion,
+                embedding_service=EmbeddingService(
+                    document_repository=repository,
+                    chunk_repository=chunk_repository,
+                    embedding_provider=provider,
+                    batch_size=50,
+                ),
+            )
+            context = self.dependency_context(dependencies)
+            previous_eager = celery_app.conf.task_always_eager
+            celery_app.conf.task_always_eager = True
+            try:
+                with patch(
+                    "app.infrastructure.queue.tasks.document_tasks."
+                    "get_document_task_dependencies",
+                    context,
+                ):
+                    result = process_document_task.apply_async(
+                        args=["document-id"]
+                    ).get(propagate=True)
+            finally:
+                celery_app.conf.task_always_eager = previous_eager
+
+        self.assertEqual(result["status"], DocumentStatus.READY.value)
+        self.assertEqual(document.status, DocumentStatus.READY.value)
+        self.assertTrue(
+            all(
+                chunk.embedding is not None
+                and chunk.embedding_provider == "local"
+                for chunk in chunks
+            )
+        )
+        openai_provider.assert_not_called()
 
 
 class DocumentStatusEndpointTests(unittest.TestCase):
@@ -602,6 +904,54 @@ class DocumentStatusEndpointTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 409)
+
+    def test_reindex_endpoint_requires_authentication(self) -> None:
+        response = TestClient(app).post(
+            "/api/v1/documents/document-id/reindex"
+        )
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_reindex_endpoint_returns_202(self) -> None:
+        service = Mock()
+        service.reindex_document.return_value = SimpleNamespace(
+            id="document-id",
+            status="queued",
+        )
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            id="owner-id"
+        )
+        app.dependency_overrides[get_document_service] = lambda: service
+
+        response = TestClient(app).post(
+            "/api/v1/documents/document-id/reindex"
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(
+            response.json(),
+            {"document_id": "document-id", "status": "queued"},
+        )
+        service.reindex_document.assert_called_once_with(
+            document_id="document-id",
+            owner_id="owner-id",
+        )
+
+    def test_another_user_cannot_reindex_document(self) -> None:
+        service = Mock()
+        service.reindex_document.side_effect = NotFoundError(
+            "Document not found"
+        )
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            id="another-owner"
+        )
+        app.dependency_overrides[get_document_service] = lambda: service
+
+        response = TestClient(app).post(
+            "/api/v1/documents/document-id/reindex"
+        )
+
+        self.assertEqual(response.status_code, 404)
 
 
 if __name__ == "__main__":

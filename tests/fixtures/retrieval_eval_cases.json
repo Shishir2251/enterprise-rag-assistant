@@ -1,0 +1,20 @@
+{
+  "name": "synthetic-enterprise-rag-retrieval-evaluation",
+  "cases": [
+    {
+      "query": "Which Python framework is used by the API?",
+      "expected_document_id": "synthetic-architecture-document",
+      "expected_chunk_index": 0
+    },
+    {
+      "query": "Which database extension provides vector search?",
+      "expected_document_id": "synthetic-architecture-document",
+      "expected_chunk_index": 1
+    },
+    {
+      "query": "How are background document jobs processed?",
+      "expected_document_id": "synthetic-operations-document",
+      "expected_chunk_index": 2
+    }
+  ]
+}

@@ -66,7 +66,7 @@ class FakeEmbeddingProviderTests(unittest.TestCase):
         )
 
         with patch(
-            "app.infrastructure.embeddings.embedding_provider_factory."
+            "app.infrastructure.embeddings.openai_embedding_provider."
             "OpenAIEmbeddingProvider"
         ) as openai_provider:
             provider = create_embedding_provider(config)
@@ -85,7 +85,7 @@ class FakeEmbeddingProviderTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             ConfigurationError,
-            "Expected 'fake' or 'openai'",
+            "Expected 'fake', 'local', or 'openai'",
         ):
             create_embedding_provider(config)
 

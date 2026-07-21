@@ -47,6 +47,14 @@ class IDocumentService(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def reindex_document(
+        self,
+        document_id: str,
+        owner_id: str,
+    ) -> DocumentModel:
+        raise NotImplementedError
+
+    @abstractmethod
     def delete_document(
         self,
         document_id: str,

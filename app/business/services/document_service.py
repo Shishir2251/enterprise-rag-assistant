@@ -165,6 +165,42 @@ class DocumentService(IDocumentService):
 
         return self.document_repository.set_task_id(document.id, task_id)
 
+    def reindex_document(
+        self,
+        document_id: str,
+        owner_id: str,
+    ) -> DocumentModel:
+        document = self.get_document(document_id, owner_id)
+        if document.status not in DocumentStatus.process_complete_values():
+            raise ConflictError(
+                "Only ready documents can be queued for reindexing"
+            )
+
+        queued_document = self.document_repository.claim_ready_for_reindex(
+            document_id=document.id,
+            owner_id=owner_id,
+        )
+        if queued_document is None:
+            raise ConflictError(
+                "Only ready documents can be queued for reindexing"
+            )
+        try:
+            task_id = self.processing_queue.enqueue_reindex(document.id)
+        except Exception as exc:
+            self._restore_ready_after_reindex_queue_failure(document.id)
+            logger.exception(
+                "Document reindex could not be queued",
+                extra={
+                    "document_id": document.id,
+                    "status": DocumentStatus.READY.value,
+                },
+            )
+            raise QueueUnavailableError(
+                "Document reindex could not be queued"
+            ) from exc
+
+        return self.document_repository.set_task_id(document.id, task_id)
+
     def delete_document(
         self,
         document_id: str,
@@ -233,6 +269,19 @@ class DocumentService(IDocumentService):
                 "Unable to persist queue failure status",
                 extra={"document_id": document_id},
             )
+
+    def _restore_ready_after_reindex_queue_failure(
+        self,
+        document_id: str,
+    ) -> None:
+        try:
+            self.document_repository.mark_ready(document_id)
+        except Exception:
+            logger.error(
+                "Unable to restore document after reindex queue failure",
+                extra={"document_id": document_id},
+            )
+            self._mark_queue_failure(document_id)
 
     @staticmethod
     def _validate_file_signature(

@@ -6,9 +6,6 @@ from app.core.exceptions import ConfigurationError
 from app.infrastructure.embeddings.fake_embedding_provider import (
     FakeEmbeddingProvider,
 )
-from app.infrastructure.embeddings.openai_embedding_provider import (
-    OpenAIEmbeddingProvider,
-)
 
 
 def create_embedding_provider(
@@ -21,7 +18,29 @@ def create_embedding_provider(
             dimensions=config.EMBEDDING_DIMENSION,
             model_name=config.EMBEDDING_MODEL,
         )
+    if provider_name == "local":
+        from app.infrastructure.embeddings.local_embedding_provider import (
+            LocalEmbeddingProvider,
+        )
+
+        active_model = config.EMBEDDING_MODEL.strip()
+        local_model = config.LOCAL_EMBEDDING_MODEL.strip()
+        if active_model != local_model:
+            raise ConfigurationError(
+                "EMBEDDING_MODEL must match LOCAL_EMBEDDING_MODEL in local mode"
+            )
+
+        return LocalEmbeddingProvider(
+            model_name=local_model,
+            dimensions=config.EMBEDDING_DIMENSION,
+            batch_size=config.LOCAL_EMBEDDING_BATCH_SIZE,
+            device=config.LOCAL_EMBEDDING_DEVICE,
+        )
     if provider_name == "openai":
+        from app.infrastructure.embeddings.openai_embedding_provider import (
+            OpenAIEmbeddingProvider,
+        )
+
         configured_api_key = config.OPENAI_API_KEY
         return OpenAIEmbeddingProvider(
             api_key=(
@@ -34,5 +53,5 @@ def create_embedding_provider(
         )
 
     raise ConfigurationError(
-        "Unsupported EMBEDDING_PROVIDER. Expected 'fake' or 'openai'"
+        "Unsupported EMBEDDING_PROVIDER. Expected 'fake', 'local', or 'openai'"
     )

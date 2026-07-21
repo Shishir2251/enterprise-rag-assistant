@@ -7,3 +7,6 @@ class IDocumentProcessingQueue(ABC):
     def enqueue(self, document_id: str) -> str:
         raise NotImplementedError
 
+    @abstractmethod
+    def enqueue_reindex(self, document_id: str) -> str:
+        raise NotImplementedError

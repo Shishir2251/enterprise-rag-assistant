@@ -64,8 +64,27 @@ class EmbeddingService(IEmbeddingService):
             raise NotFoundError("Document not found")
         return self._embed_chunks(document_id)
 
+    def reindex_document_chunks(
+        self,
+        document_id: str,
+        owner_id: str,
+    ) -> int:
+        document = self.document_repository.get_by_id(
+            document_id=document_id,
+            owner_id=owner_id,
+        )
+        if document is None:
+            raise NotFoundError("Document not found")
+
+        self.chunk_repository.clear_embeddings(document_id)
+        return self._embed_chunks(document_id)
+
     def _embed_chunks(self, document_id: str) -> int:
-        chunks = self.chunk_repository.list_without_embeddings(document_id)
+        chunks = self.chunk_repository.list_stale_embeddings(
+            document_id=document_id,
+            model_name=self.embedding_provider.model_name,
+            provider_name=self.embedding_provider.provider_name,
+        )
         if not chunks:
             return 0
 
@@ -83,6 +102,7 @@ class EmbeddingService(IEmbeddingService):
             self.chunk_repository.save_embeddings(
                 chunks=batch,
                 model_name=self.embedding_provider.model_name,
+                provider_name=self.embedding_provider.provider_name,
                 embedded_at=datetime.now(timezone.utc),
             )
             embedded_count += len(batch)

@@ -30,6 +30,7 @@ from app.presentation.schemas.embedding_schema import (
     DocumentEmbeddingResponse,
 )
 from app.presentation.schemas.document_status_schema import (
+    DocumentReindexResponse,
     DocumentRetryResponse,
     DocumentStatusResponse,
 )
@@ -94,6 +95,22 @@ def retry_document(
     service: IDocumentService = Depends(get_document_service),
 ):
     return service.retry_document(
+        document_id=document_id,
+        owner_id=current_user.id,
+    )
+
+
+@router.post(
+    "/{document_id}/reindex",
+    response_model=DocumentReindexResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def reindex_document(
+    document_id: str,
+    current_user: UserModel = Depends(get_current_user),
+    service: IDocumentService = Depends(get_document_service),
+):
+    return service.reindex_document(
         document_id=document_id,
         owner_id=current_user.id,
     )

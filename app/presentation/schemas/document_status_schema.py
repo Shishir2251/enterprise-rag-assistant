@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -33,5 +34,12 @@ class DocumentRetryResponse(BaseModel):
     document_id: str = Field(validation_alias="id")
     status: str
     queued_task_id: str = Field(validation_alias="task_id")
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+class DocumentReindexResponse(BaseModel):
+    document_id: str = Field(validation_alias="id")
+    status: Literal["queued"]
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)

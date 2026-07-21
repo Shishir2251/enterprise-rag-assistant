@@ -26,6 +26,7 @@ class PgVectorRepository(IVectorRepository):
         top_k: int,
         minimum_score: float,
         embedding_model: str,
+        embedding_provider: str,
         document_ids: Sequence[str] | None = None,
     ) -> list[RetrievalResult]:
         cosine_distance = DocumentChunkModel.embedding.cosine_distance(
@@ -56,6 +57,8 @@ class PgVectorRepository(IVectorRepository):
                 ),
                 DocumentChunkModel.embedding.is_not(None),
                 DocumentChunkModel.embedding_model == embedding_model,
+                DocumentChunkModel.embedding_provider
+                == embedding_provider,
                 similarity_score >= minimum_score,
             )
             .order_by(cosine_distance.asc())

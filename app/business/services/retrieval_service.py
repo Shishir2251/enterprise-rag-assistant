@@ -24,23 +24,27 @@ logger = logging.getLogger(__name__)
 
 class RetrievalService(IRetrievalService):
 
-    MAX_TOP_K = 20
-
     def __init__(
         self,
         vector_repository: IVectorRepository,
         embedding_provider: IEmbeddingProvider,
         default_top_k: int,
         minimum_score: float,
+        maximum_top_k: int = 20,
     ) -> None:
-        if not 1 <= default_top_k <= self.MAX_TOP_K:
-            raise ValueError("Default retrieval top_k must be between 1 and 20")
+        if maximum_top_k <= 0:
+            raise ValueError("Maximum retrieval top_k must be greater than zero")
+        if not 1 <= default_top_k <= maximum_top_k:
+            raise ValueError(
+                "Default retrieval top_k must be between 1 and the maximum"
+            )
         if not 0.0 <= minimum_score <= 1.0:
             raise ValueError("Minimum retrieval score must be between 0 and 1")
 
         self.vector_repository = vector_repository
         self.embedding_provider = embedding_provider
         self.default_top_k = default_top_k
+        self.maximum_top_k = maximum_top_k
         self.minimum_score = minimum_score
 
     def search(
@@ -59,8 +63,10 @@ class RetrievalService(IRetrievalService):
             )
 
         result_limit = self.default_top_k if top_k is None else top_k
-        if not 1 <= result_limit <= self.MAX_TOP_K:
-            raise ValidationError("top_k must be between 1 and 20")
+        if not 1 <= result_limit <= self.maximum_top_k:
+            raise ValidationError(
+                f"top_k must be between 1 and {self.maximum_top_k}"
+            )
 
         try:
             query_embedding = self.embedding_provider.embed_query(
@@ -77,6 +83,7 @@ class RetrievalService(IRetrievalService):
                 top_k=result_limit,
                 minimum_score=self.minimum_score,
                 embedding_model=self.embedding_provider.model_name,
+                embedding_provider=self.embedding_provider.provider_name,
                 document_ids=list(document_ids) if document_ids else None,
             )
         except ApplicationError:

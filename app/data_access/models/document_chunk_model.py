@@ -61,12 +61,17 @@ class DocumentChunkModel(Base):
     )
 
     embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(1536),
+        Vector(384),
         nullable=True,
     )
 
     embedding_model: Mapped[str | None] = mapped_column(
         String(100),
+        nullable=True,
+    )
+
+    embedding_provider: Mapped[str | None] = mapped_column(
+        String(50),
         nullable=True,
     )
 

@@ -29,7 +29,11 @@ PERMANENT_PROCESSING_ERRORS = (
     autoretry_for=(),
     max_retries=settings.DOCUMENT_PROCESSING_MAX_RETRIES,
 )
-def process_document_task(self, document_id: str) -> dict:
+def process_document_task(
+    self,
+    document_id: str,
+    reindex_embeddings: bool = False,
+) -> dict:
     task_id = str(self.request.id or "")
     logger.info(
         "Document processing task received",
@@ -62,13 +66,46 @@ def process_document_task(self, document_id: str) -> dict:
                     "chunks_embedded": 0,
                 }
 
-            if document.status in DocumentStatus.process_complete_values():
+            if (
+                document.status in DocumentStatus.process_complete_values()
+                and (
+                    not reindex_embeddings
+                    or (task_id and document.task_id == task_id)
+                )
+            ):
                 chunks = dependencies.chunk_repository.list_by_document(
                     document_id
                 )
                 return {
                     "document_id": document_id,
                     "status": DocumentStatus.READY.value,
+                    "chunks_processed": len(chunks),
+                    "chunks_embedded": sum(
+                        chunk.embedding is not None for chunk in chunks
+                    ),
+                }
+
+            if (
+                reindex_embeddings
+                and task_id
+                and document.task_id
+                and document.task_id != task_id
+            ):
+                chunks = dependencies.chunk_repository.list_by_document(
+                    document_id
+                )
+                logger.info(
+                    "Stale document reindex task ignored",
+                    extra=_log_context(
+                        document_id,
+                        task_id,
+                        "superseded",
+                        self.request.retries,
+                    ),
+                )
+                return {
+                    "document_id": document_id,
+                    "status": document.status,
                     "chunks_processed": len(chunks),
                     "chunks_embedded": sum(
                         chunk.embedding is not None for chunk in chunks
@@ -82,7 +119,11 @@ def process_document_task(self, document_id: str) -> dict:
             repository.update_progress(
                 document_id,
                 20,
-                "extracting_text",
+                (
+                    "reindexing_embeddings"
+                    if reindex_embeddings
+                    else "extracting_text"
+                ),
             )
             logger.info(
                 "Document processing started",
@@ -94,44 +135,59 @@ def process_document_task(self, document_id: str) -> dict:
                 ),
             )
 
-            def report_progress(progress: int, step: str) -> None:
-                repository.update_progress(document_id, progress, step)
-                if step == "chunking":
-                    logger.info(
-                        "Document text extraction completed",
-                        extra=_log_context(
-                            document_id,
-                            task_id,
-                            step,
-                            self.request.retries,
-                        ),
+            if reindex_embeddings:
+                existing_chunks = (
+                    dependencies.chunk_repository.list_by_document(document_id)
+                )
+                if not existing_chunks:
+                    raise ValidationError(
+                        "No chunks were generated from the document"
                     )
+                chunks_processed = len(existing_chunks)
+            else:
+                def report_progress(progress: int, step: str) -> None:
+                    repository.update_progress(document_id, progress, step)
+                    if step == "chunking":
+                        logger.info(
+                            "Document text extraction completed",
+                            extra=_log_context(
+                                document_id,
+                                task_id,
+                                step,
+                                self.request.retries,
+                            ),
+                        )
 
-            chunks_processed = dependencies.ingestion_service.ingest_document(
-                document_id=document_id,
-                owner_id=document.owner_id,
-                progress_callback=report_progress,
-            )
-            logger.info(
-                "Document chunks generated",
-                extra=_log_context(
-                    document_id,
-                    task_id,
-                    "saving_chunks",
-                    self.request.retries,
-                ),
-            )
+                chunks_processed = (
+                    dependencies.ingestion_service.ingest_document(
+                        document_id=document_id,
+                        owner_id=document.owner_id,
+                        progress_callback=report_progress,
+                    )
+                )
+                logger.info(
+                    "Document chunks generated",
+                    extra=_log_context(
+                        document_id,
+                        task_id,
+                        "saving_chunks",
+                        self.request.retries,
+                    ),
+                )
 
             repository.update_progress(
                 document_id,
                 75,
                 "generating_embeddings",
             )
-            chunks_embedded = (
-                dependencies.embedding_service.embed_document_chunks(
-                    document_id=document_id,
-                    owner_id=document.owner_id,
-                )
+            embedding_method = (
+                dependencies.embedding_service.reindex_document_chunks
+                if reindex_embeddings
+                else dependencies.embedding_service.embed_document_chunks
+            )
+            chunks_embedded = embedding_method(
+                document_id=document_id,
+                owner_id=document.owner_id,
             )
             chunks = dependencies.chunk_repository.list_by_document(
                 document_id
@@ -143,6 +199,19 @@ def process_document_task(self, document_id: str) -> dict:
             if any(chunk.embedding is None for chunk in chunks):
                 raise EmbeddingError(
                     "Not all document chunks received embeddings"
+                )
+            active_provider = getattr(
+                dependencies.embedding_service,
+                "__dict__",
+                {},
+            ).get("embedding_provider")
+            if active_provider is not None and any(
+                chunk.embedding_model != active_provider.model_name
+                or chunk.embedding_provider != active_provider.provider_name
+                for chunk in chunks
+            ):
+                raise EmbeddingError(
+                    "Document chunks contain stale embedding metadata"
                 )
 
             logger.info(

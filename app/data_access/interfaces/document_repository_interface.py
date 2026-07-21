@@ -53,6 +53,15 @@ class IDocumentRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def claim_ready_for_reindex(
+        self,
+        document_id: str,
+        owner_id: str,
+    ) -> DocumentModel | None:
+        """Atomically transition an owned ready document to queued."""
+        raise NotImplementedError
+
+    @abstractmethod
     def mark_processing(self, document_id: str) -> DocumentModel:
         raise NotImplementedError
 

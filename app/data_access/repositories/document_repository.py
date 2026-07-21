@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.data_access.interfaces.document_repository_interface import (
@@ -89,6 +89,41 @@ class DocumentRepository(IDocumentRepository):
         document.processing_started_at = None
         document.processing_completed_at = None
         return self._save(document)
+
+    def claim_ready_for_reindex(
+        self,
+        document_id: str,
+        owner_id: str,
+    ) -> DocumentModel | None:
+        statement = (
+            update(DocumentModel)
+            .where(
+                DocumentModel.id == document_id,
+                DocumentModel.owner_id == owner_id,
+                DocumentModel.status.in_(
+                    DocumentStatus.process_complete_values()
+                ),
+            )
+            .values(
+                status=DocumentStatus.QUEUED.value,
+                progress=5,
+                current_step="queued",
+                error_message=None,
+                task_id=None,
+                processing_started_at=None,
+                processing_completed_at=None,
+            )
+            .returning(DocumentModel)
+        )
+        try:
+            document = self.db.scalar(statement)
+            self.db.commit()
+            if document is not None:
+                self.db.refresh(document)
+            return document
+        except Exception:
+            self.db.rollback()
+            raise
 
     def mark_processing(self, document_id: str) -> DocumentModel:
         document = self._get_internal_or_raise(document_id)

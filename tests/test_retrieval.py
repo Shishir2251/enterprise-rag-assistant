@@ -18,6 +18,7 @@ from app.presentation.dependencies.service_dependency import (
 
 
 class FakeEmbeddingProvider:
+    provider_name = "test-provider"
     model_name = "test-model"
 
     def __init__(
@@ -93,6 +94,23 @@ class RetrievalServiceTests(unittest.TestCase):
         self.assertEqual(provider.queries, [])
         self.assertEqual(repository.calls, [])
 
+    def test_configured_top_k_maximum_is_enforced(self) -> None:
+        provider = FakeEmbeddingProvider()
+        repository = FakeVectorRepository()
+        service = RetrievalService(
+            vector_repository=repository,
+            embedding_provider=provider,
+            default_top_k=3,
+            maximum_top_k=3,
+            minimum_score=0.25,
+        )
+
+        with self.assertRaisesRegex(ValidationError, "between 1 and 3"):
+            service.search("valid query", "owner-id", top_k=4)
+
+        self.assertEqual(provider.queries, [])
+        self.assertEqual(repository.calls, [])
+
     def test_successful_query_embedding_and_repository_call(self) -> None:
         repository = FakeVectorRepository([make_result()])
         service, provider, _ = self.make_service(repository=repository)
@@ -114,6 +132,7 @@ class RetrievalServiceTests(unittest.TestCase):
                     "top_k": 5,
                     "minimum_score": 0.30,
                     "embedding_model": "test-model",
+                    "embedding_provider": "test-provider",
                     "document_ids": ["document-id"],
                 }
             ],
@@ -162,6 +181,7 @@ class PgVectorRepositoryStatementTests(unittest.TestCase):
             top_k=5,
             minimum_score=minimum_score,
             embedding_model="test-model",
+            embedding_provider="test-provider",
             document_ids=document_ids,
         )
         statement = session.execute.call_args.args[0]
@@ -217,6 +237,15 @@ class PgVectorRepositoryStatementTests(unittest.TestCase):
 
         self.assertIn("document_chunks.embedding_model =", sql)
         self.assertEqual(params["embedding_model_1"], "test-model")
+
+    def test_only_active_embedding_provider_is_searched(self) -> None:
+        sql, params, _ = self.execute_search()
+
+        self.assertIn("document_chunks.embedding_provider =", sql)
+        self.assertEqual(
+            params["embedding_provider_1"],
+            "test-provider",
+        )
 
     def test_results_are_ordered_by_smallest_cosine_distance(self) -> None:
         sql, _, results = self.execute_search(
