@@ -2,15 +2,24 @@ import logging
 import zipfile
 from pathlib import Path
 
+from app.business.interfaces.document_processing_queue_interface import (
+    IDocumentProcessingQueue,
+)
 from app.business.interfaces.document_service_interface import IDocumentService
 from app.business.interfaces.file_storage_interface import IFileStorage
 from app.business.interfaces.uploaded_file_interface import IUploadedFile
 from app.core.config import settings
-from app.core.exceptions import NotFoundError, PayloadTooLargeError, ValidationError
+from app.core.exceptions import (
+    ConflictError,
+    NotFoundError,
+    PayloadTooLargeError,
+    QueueUnavailableError,
+    ValidationError,
+)
 from app.data_access.interfaces.document_repository_interface import (
     IDocumentRepository,
 )
-from app.data_access.models.document_model import DocumentModel
+from app.data_access.models.document_model import DocumentModel, DocumentStatus
 
 
 logger = logging.getLogger(__name__)
@@ -31,9 +40,11 @@ class DocumentService(IDocumentService):
         self,
         document_repository: IDocumentRepository,
         file_storage: IFileStorage,
+        processing_queue: IDocumentProcessingQueue,
     ):
         self.document_repository = document_repository
         self.file_storage = file_storage
+        self.processing_queue = processing_queue
 
     def upload(
         self,
@@ -60,11 +71,41 @@ class DocumentService(IDocumentService):
         )
 
         try:
-            return self.document_repository.create(document)
-
+            document = self.document_repository.create(document)
         except Exception:
             self.file_storage.delete(file_path)
             raise
+
+        self.document_repository.mark_queued(document.id)
+        try:
+            task_id = self.processing_queue.enqueue(document.id)
+        except Exception as exc:
+            self._mark_queue_failure(document.id)
+            logger.exception(
+                "Document processing could not be queued",
+                extra={
+                    "document_id": document.id,
+                    "status": DocumentStatus.FAILED.value,
+                },
+            )
+            raise QueueUnavailableError(
+                "Document was uploaded but processing could not be queued"
+            ) from exc
+
+        queued_document = self.document_repository.set_task_id(
+            document.id,
+            task_id,
+        )
+        logger.info(
+            "Document queued for processing",
+            extra={
+                "document_id": document.id,
+                "task_id": task_id,
+                "status": queued_document.status,
+                "retry_count": queued_document.retry_count,
+            },
+        )
+        return queued_document
 
     def list_documents(
         self,
@@ -86,6 +127,43 @@ class DocumentService(IDocumentService):
             raise NotFoundError("Document not found")
 
         return document
+
+    def get_document_status(
+        self,
+        document_id: str,
+        owner_id: str,
+    ) -> DocumentModel:
+        return self.get_document(document_id, owner_id)
+
+    def retry_document(
+        self,
+        document_id: str,
+        owner_id: str,
+    ) -> DocumentModel:
+        document = self.get_document(document_id, owner_id)
+        if document.status != DocumentStatus.FAILED.value:
+            raise ConflictError(
+                "Only failed documents can be queued for retry"
+            )
+
+        self.document_repository.mark_queued(document.id)
+        try:
+            task_id = self.processing_queue.enqueue(document.id)
+        except Exception as exc:
+            self._mark_queue_failure(document.id)
+            logger.exception(
+                "Document retry could not be queued",
+                extra={
+                    "document_id": document.id,
+                    "status": DocumentStatus.FAILED.value,
+                    "retry_count": document.retry_count,
+                },
+            )
+            raise QueueUnavailableError(
+                "Document retry could not be queued"
+            ) from exc
+
+        return self.document_repository.set_task_id(document.id, task_id)
 
     def delete_document(
         self,
@@ -143,6 +221,18 @@ class DocumentService(IDocumentService):
 
         self._validate_file_signature(file, extension)
         return original_name, extension, mime_type, file_size
+
+    def _mark_queue_failure(self, document_id: str) -> None:
+        try:
+            self.document_repository.mark_failed(
+                document_id,
+                "Document processing could not be queued",
+            )
+        except Exception:
+            logger.exception(
+                "Unable to persist queue failure status",
+                extra={"document_id": document_id},
+            )
 
     @staticmethod
     def _validate_file_signature(

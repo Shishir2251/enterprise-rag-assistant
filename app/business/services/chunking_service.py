@@ -67,6 +67,10 @@ class ChunkingService(IChunkingService):
 
     @staticmethod
     def _normalize_text(text: str) -> str:
+        # PostgreSQL text values cannot contain the NUL character. Some PDF
+        # extractors preserve embedded NULs from malformed font mappings, so
+        # remove them at the text-normalization boundary before persistence.
+        text = text.replace("\x00", "")
         lines = [
             line.strip()
             for line in text.splitlines()

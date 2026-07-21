@@ -5,6 +5,9 @@ from app.business.interfaces.auth_service_interface import IAuthService
 from app.business.interfaces.chat_service_interface import IChatService
 from app.business.interfaces.context_builder_interface import IContextBuilder
 from app.business.interfaces.document_service_interface import IDocumentService
+from app.business.interfaces.document_processing_queue_interface import (
+    IDocumentProcessingQueue,
+)
 from app.business.interfaces.embedding_service_interface import (
     IEmbeddingService,
 )
@@ -62,6 +65,9 @@ from app.infrastructure.file_storage.local_storage_provider import (
     LocalStorageProvider,
 )
 from app.infrastructure.llm.llm_provider_factory import create_llm_provider
+from app.infrastructure.queue.celery_document_processing_queue import (
+    CeleryDocumentProcessingQueue,
+)
 from app.infrastructure.text_extraction.text_extractor_factory import (
     TextExtractorFactory,
 )
@@ -107,6 +113,10 @@ def get_file_storage() -> IFileStorage:
     return LocalStorageProvider()
 
 
+def get_document_processing_queue() -> IDocumentProcessingQueue:
+    return CeleryDocumentProcessingQueue()
+
+
 def get_embedding_provider() -> IEmbeddingProvider:
     return create_embedding_provider(settings)
 
@@ -124,10 +134,14 @@ def get_auth_service(
 def get_document_service(
     repository: IDocumentRepository = Depends(get_document_repository),
     storage: IFileStorage = Depends(get_file_storage),
+    processing_queue: IDocumentProcessingQueue = Depends(
+        get_document_processing_queue
+    ),
 ) -> IDocumentService:
     return DocumentService(
         document_repository=repository,
         file_storage=storage,
+        processing_queue=processing_queue,
     )
 
 

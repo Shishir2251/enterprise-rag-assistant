@@ -48,3 +48,7 @@ class LLMError(ApplicationError):
 
 class ConfigurationError(ApplicationError):
     """Raised when a required application integration is not configured."""
+
+
+class QueueUnavailableError(ApplicationError):
+    """Raised when a background job cannot be queued."""

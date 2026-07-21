@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infrastructure.database.base import Base
@@ -10,9 +10,16 @@ from app.infrastructure.database.base import Base
 
 class DocumentStatus(str, Enum):
     UPLOADED = "uploaded"
+    QUEUED = "queued"
     PROCESSING = "processing"
+    READY = "ready"
+    # Transitional compatibility for records created before the ready state.
     COMPLETED = "completed"
     FAILED = "failed"
+
+    @classmethod
+    def process_complete_values(cls) -> tuple[str, str]:
+        return cls.READY.value, cls.COMPLETED.value
 
 
 class DocumentModel(Base):
@@ -66,6 +73,38 @@ class DocumentModel(Base):
     error_message: Mapped[str | None] = mapped_column(
         String(1000),
         nullable=True,
+    )
+
+    progress: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
+
+    current_step: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    processing_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    processing_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    task_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    retry_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
     )
 
     created_at: Mapped[datetime] = mapped_column(

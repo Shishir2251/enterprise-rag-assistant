@@ -44,11 +44,27 @@ class EmbeddingService(IEmbeddingService):
         )
         if document is None:
             raise NotFoundError("Document not found")
-        if document.status != DocumentStatus.COMPLETED.value:
+        if document.status not in DocumentStatus.process_complete_values():
             raise ConflictError(
                 "Document processing must complete before embedding"
             )
 
+        return self._embed_chunks(document_id)
+
+    def embed_document_chunks(
+        self,
+        document_id: str,
+        owner_id: str,
+    ) -> int:
+        document = self.document_repository.get_by_id(
+            document_id=document_id,
+            owner_id=owner_id,
+        )
+        if document is None:
+            raise NotFoundError("Document not found")
+        return self._embed_chunks(document_id)
+
+    def _embed_chunks(self, document_id: str) -> int:
         chunks = self.chunk_repository.list_without_embeddings(document_id)
         if not chunks:
             return 0

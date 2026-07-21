@@ -199,12 +199,18 @@ class PgVectorRepositoryStatementTests(unittest.TestCase):
         self.assertIn(") >=", sql)
         self.assertEqual(params["param_2"], 0.72)
 
-    def test_only_embedded_chunks_and_completed_documents_are_searched(self) -> None:
+    def test_only_embedded_chunks_and_ready_documents_are_searched(self) -> None:
         sql, params, _ = self.execute_search()
 
         self.assertIn("document_chunks.embedding IS NOT NULL", sql)
-        self.assertIn("documents.status =", sql)
-        self.assertEqual(params["status_1"], "completed")
+        self.assertIn("documents.status IN", sql)
+        self.assertEqual(
+            {
+                params["status_1_1"],
+                params["status_1_2"],
+            },
+            {"ready", "completed"},
+        )
 
     def test_only_active_embedding_model_is_searched(self) -> None:
         sql, params, _ = self.execute_search()

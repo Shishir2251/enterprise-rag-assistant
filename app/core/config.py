@@ -25,7 +25,13 @@ class Settings(BaseSettings):
     RETRIEVAL_MIN_SCORE: float = Field(default=0.30, ge=0.0, le=1.0)
     LLM_PROVIDER: str = "none"
 
-    REDIS_URL: str = ""
+    REDIS_URL: str = "redis://localhost:6379/0"
+    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
+    CELERY_TASK_ALWAYS_EAGER: bool = False
+    CELERY_TASK_EAGER_PROPAGATES: bool = True
+    DOCUMENT_PROCESSING_MAX_RETRIES: int = Field(default=3, ge=0)
+    DOCUMENT_PROCESSING_RETRY_DELAY_SECONDS: int = Field(default=30, ge=0)
     UPLOAD_DIR: str = "uploads"
     MAX_UPLOAD_SIZE_BYTES: int = 10 * 1024 * 1024
     CHUNK_SIZE: int = 1000

@@ -51,7 +51,9 @@ class PgVectorRepository(IVectorRepository):
             )
             .where(
                 DocumentModel.owner_id == owner_id,
-                DocumentModel.status == DocumentStatus.COMPLETED.value,
+                DocumentModel.status.in_(
+                    DocumentStatus.process_complete_values()
+                ),
                 DocumentChunkModel.embedding.is_not(None),
                 DocumentChunkModel.embedding_model == embedding_model,
                 similarity_score >= minimum_score,

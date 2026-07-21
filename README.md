@@ -41,15 +41,57 @@ database/JWT values.
 
 ```powershell
 .\venv\Scripts\python.exe -m pytest -q
-.\venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
-The current schema already contains `embedding`, `embedding_model`, and
-`embedded_at`, so this change needs no new migration. For a database that has
-not applied the existing embedding migration:
+Apply all database migrations:
 
 ```powershell
 .\venv\Scripts\python.exe -m alembic upgrade head
+```
+
+## Automatic document processing
+
+Document upload saves the file and database record, then queues extraction,
+chunking, and embedding work for Celery. The API request does not run those
+operations synchronously.
+
+Development startup uses three terminals.
+
+Terminal 1:
+
+```powershell
+docker compose up -d redis
+```
+
+Terminal 2 (Windows):
+
+```powershell
+.\venv\Scripts\python.exe -m celery -A app.infrastructure.queue.celery_app.celery_app worker --loglevel=info --pool=solo
+```
+
+Terminal 3:
+
+```powershell
+.\venv\Scripts\python.exe -m uvicorn app.main:app --reload
+```
+
+Required queue configuration:
+
+```env
+REDIS_URL=redis://localhost:6379/0
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/1
+CELERY_TASK_ALWAYS_EAGER=False
+CELERY_TASK_EAGER_PROPAGATES=True
+DOCUMENT_PROCESSING_MAX_RETRIES=3
+DOCUMENT_PROCESSING_RETRY_DELAY_SECONDS=30
+```
+
+For unit tests, Celery eager mode can be enabled without Redis:
+
+```env
+CELERY_TASK_ALWAYS_EAGER=True
+CELERY_TASK_EAGER_PROPAGATES=True
 ```
 
 ## Development API flow
@@ -57,10 +99,22 @@ not applied the existing embedding migration:
 Open Swagger at `/docs`, authorize with the JWT returned by login, then:
 
 1. `POST /api/v1/documents/upload`
-2. `POST /api/v1/documents/{document_id}/process`
-3. `POST /api/v1/documents/{document_id}/embed`
-4. `POST /api/v1/retrieval/search`
-5. `POST /api/v1/context/build`
+2. Confirm the upload response has `status=queued`
+3. Poll `GET /api/v1/documents/{document_id}/status`
+4. Wait for `status=ready`
+5. `POST /api/v1/retrieval/search`
+6. `POST /api/v1/context/build`
+7. Create a chat session and send a chat message
+
+Failed documents can be queued again with:
+
+```http
+POST /api/v1/documents/{document_id}/retry
+```
+
+The synchronous `/process` and `/embed` routes remain available as deprecated
+development endpoints. Production clients should use upload plus the status
+endpoint.
 
 `POST /api/v1/context/build` returns retrieved source context and
 `llm_status=not_configured`; it does not call an LLM or fabricate an answer.

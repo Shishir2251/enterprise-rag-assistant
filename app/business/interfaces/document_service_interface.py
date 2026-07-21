@@ -31,6 +31,22 @@ class IDocumentService(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def get_document_status(
+        self,
+        document_id: str,
+        owner_id: str,
+    ) -> DocumentModel:
+        raise NotImplementedError
+
+    @abstractmethod
+    def retry_document(
+        self,
+        document_id: str,
+        owner_id: str,
+    ) -> DocumentModel:
+        raise NotImplementedError
+
+    @abstractmethod
     def delete_document(
         self,
         document_id: str,

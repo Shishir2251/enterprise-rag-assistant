@@ -29,6 +29,10 @@ from app.presentation.schemas.embedding_schema import (
     DocumentEmbeddingResetResponse,
     DocumentEmbeddingResponse,
 )
+from app.presentation.schemas.document_status_schema import (
+    DocumentRetryResponse,
+    DocumentStatusResponse,
+)
 
 
 router = APIRouter(
@@ -62,6 +66,37 @@ def list_documents(
     service: IDocumentService = Depends(get_document_service),
 ):
     return service.list_documents(current_user.id)
+
+
+@router.get(
+    "/{document_id}/status",
+    response_model=DocumentStatusResponse,
+)
+def get_document_status(
+    document_id: str,
+    current_user: UserModel = Depends(get_current_user),
+    service: IDocumentService = Depends(get_document_service),
+):
+    return service.get_document_status(
+        document_id=document_id,
+        owner_id=current_user.id,
+    )
+
+
+@router.post(
+    "/{document_id}/retry",
+    response_model=DocumentRetryResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def retry_document(
+    document_id: str,
+    current_user: UserModel = Depends(get_current_user),
+    service: IDocumentService = Depends(get_document_service),
+):
+    return service.retry_document(
+        document_id=document_id,
+        owner_id=current_user.id,
+    )
 
 
 @router.get(
@@ -99,6 +134,7 @@ def delete_document(
 @router.post(
     "/{document_id}/process",
     response_model=DocumentProcessResponse,
+    deprecated=True,
 )
 def process_document(
     document_id: str,
@@ -114,6 +150,7 @@ def process_document(
 @router.post(
     "/{document_id}/embed",
     response_model=DocumentEmbeddingResponse,
+    deprecated=True,
 )
 def embed_document(
     document_id: str,

@@ -4,6 +4,24 @@ from typing import Literal
 from pydantic import BaseModel, field_validator
 
 
+def sanitize_document_error(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    safe_messages = {
+        "Document processing failed",
+        "Document processing could not be queued",
+        "No chunks were generated from the document",
+        "No readable text was extracted from the document",
+        "Uploaded file is unavailable",
+    }
+    if value in safe_messages or value.startswith(
+        "No text extractor registered for extension:"
+    ):
+        return value
+    return "Document processing failed"
+
+
 class DocumentResponse(BaseModel):
     id: str
     original_name: str
@@ -19,24 +37,11 @@ class DocumentResponse(BaseModel):
     @field_validator("error_message")
     @classmethod
     def hide_unsafe_error_details(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-
-        safe_messages = {
-            "Document processing failed",
-            "No chunks were generated from the document",
-            "No readable text was extracted from the document",
-            "Uploaded file is unavailable",
-        }
-        if value in safe_messages or value.startswith(
-            "No text extractor registered for extension:"
-        ):
-            return value
-        return "Document processing failed"
+        return sanitize_document_error(value)
 
 
 class DocumentProcessResponse(BaseModel):
-    status: Literal["completed"]
+    status: Literal["ready", "completed"]
     error_message: str | None = None
 
     model_config = {"from_attributes": True}
