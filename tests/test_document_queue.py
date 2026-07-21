@@ -16,6 +16,7 @@ from app.business.services.embedding_service import EmbeddingService
 from app.core.config import settings
 from app.core.exceptions import (
     ConflictError,
+    EmbeddingError,
     NotFoundError,
     QueueUnavailableError,
     ValidationError,
@@ -69,6 +70,16 @@ def make_document(
         retry_count=0,
         created_at=NOW,
         updated_at=NOW,
+    )
+
+
+def make_http_embedding_config() -> SimpleNamespace:
+    return SimpleNamespace(
+        EMBEDDING_PROVIDER="http",
+        EMBEDDING_MODEL="sentence-transformers/all-MiniLM-L6-v2",
+        EMBEDDING_DIMENSION=384,
+        HTTP_EMBEDDING_BASE_URL="http://127.0.0.1:8090",
+        HTTP_EMBEDDING_TIMEOUT_SECONDS=30,
     )
 
 
@@ -749,6 +760,18 @@ class DocumentTaskTests(unittest.TestCase):
         local_model.encode.side_effect = lambda texts, **kwargs: [
             [1.0] + [0.0] * 383 for _ in texts
         ]
+        local_config = SimpleNamespace(
+            EMBEDDING_PROVIDER="local",
+            EMBEDDING_MODEL=(
+                "sentence-transformers/all-MiniLM-L6-v2"
+            ),
+            EMBEDDING_DIMENSION=384,
+            LOCAL_EMBEDDING_MODEL=(
+                "sentence-transformers/all-MiniLM-L6-v2"
+            ),
+            LOCAL_EMBEDDING_BATCH_SIZE=32,
+            LOCAL_EMBEDDING_DEVICE="cpu",
+        )
 
         with (
             patch(
@@ -761,7 +784,7 @@ class DocumentTaskTests(unittest.TestCase):
                 "OpenAIEmbeddingProvider"
             ) as openai_provider,
         ):
-            provider = create_embedding_provider(settings)
+            provider = create_embedding_provider(local_config)
             dependencies = DocumentTaskDependencies(
                 session=dependencies.session,
                 document_repository=repository,
@@ -799,6 +822,163 @@ class DocumentTaskTests(unittest.TestCase):
             )
         )
         openai_provider.assert_not_called()
+
+    def test_celery_eager_mode_uses_http_embeddings_and_reaches_ready(
+        self,
+    ) -> None:
+        dependencies, document, repository, chunk_repository, ingestion, _ = (
+            self.make_dependencies()
+        )
+        chunks = [
+            SimpleNamespace(
+                content="The World Cup starts in June.",
+                embedding=None,
+                embedding_model=None,
+                embedding_provider=None,
+            ),
+            SimpleNamespace(
+                content="Redis is used for message queues.",
+                embedding=None,
+                embedding_model=None,
+                embedding_provider=None,
+            ),
+        ]
+        chunk_repository.list_by_document.return_value = chunks
+        chunk_repository.list_stale_embeddings.return_value = chunks
+
+        def save_embeddings(**kwargs):
+            for chunk in kwargs["chunks"]:
+                chunk.embedding_model = kwargs["model_name"]
+                chunk.embedding_provider = kwargs["provider_name"]
+
+        chunk_repository.save_embeddings.side_effect = save_embeddings
+        provider = create_embedding_provider(make_http_embedding_config())
+        expected_vectors = [
+            [1.0] + [0.0] * 383,
+            [0.0, 1.0] + [0.0] * 382,
+        ]
+
+        try:
+            with patch.object(
+                provider,
+                "embed_texts",
+                return_value=expected_vectors,
+            ) as embed_texts:
+                dependencies = DocumentTaskDependencies(
+                    session=dependencies.session,
+                    document_repository=repository,
+                    chunk_repository=chunk_repository,
+                    ingestion_service=ingestion,
+                    embedding_service=EmbeddingService(
+                        document_repository=repository,
+                        chunk_repository=chunk_repository,
+                        embedding_provider=provider,
+                        batch_size=50,
+                    ),
+                )
+                context = self.dependency_context(dependencies)
+                previous_eager = celery_app.conf.task_always_eager
+                celery_app.conf.task_always_eager = True
+                try:
+                    with patch(
+                        "app.infrastructure.queue.tasks.document_tasks."
+                        "get_document_task_dependencies",
+                        context,
+                    ):
+                        result = process_document_task.apply_async(
+                            args=["document-id"]
+                        ).get(propagate=True)
+                finally:
+                    celery_app.conf.task_always_eager = previous_eager
+        finally:
+            provider.close()
+
+        self.assertEqual(result["status"], DocumentStatus.READY.value)
+        self.assertEqual(result["chunks_embedded"], 2)
+        self.assertEqual(document.status, DocumentStatus.READY.value)
+        embed_texts.assert_called_once_with(
+            [chunk.content for chunk in chunks]
+        )
+        self.assertEqual(
+            [chunk.embedding for chunk in chunks],
+            expected_vectors,
+        )
+        self.assertTrue(
+            all(
+                chunk.embedding_provider == "http"
+                and chunk.embedding_model
+                == "sentence-transformers/all-MiniLM-L6-v2"
+                for chunk in chunks
+            )
+        )
+
+    def test_http_embedding_unavailable_schedules_safe_celery_retry(
+        self,
+    ) -> None:
+        dependencies, document, repository, chunk_repository, ingestion, _ = (
+            self.make_dependencies()
+        )
+        chunk = SimpleNamespace(
+            content="Semantic text",
+            embedding=None,
+            embedding_model=None,
+            embedding_provider=None,
+        )
+        chunk_repository.list_by_document.return_value = [chunk]
+        chunk_repository.list_stale_embeddings.return_value = [chunk]
+        provider = create_embedding_provider(make_http_embedding_config())
+        dependencies = DocumentTaskDependencies(
+            session=dependencies.session,
+            document_repository=repository,
+            chunk_repository=chunk_repository,
+            ingestion_service=ingestion,
+            embedding_service=EmbeddingService(
+                document_repository=repository,
+                chunk_repository=chunk_repository,
+                embedding_provider=provider,
+                batch_size=50,
+            ),
+        )
+        context = self.dependency_context(dependencies)
+        outage = EmbeddingError("Embedding service is unavailable.")
+
+        try:
+            with (
+                patch.object(
+                    provider,
+                    "embed_texts",
+                    side_effect=outage,
+                ) as embed_texts,
+                patch(
+                    "app.infrastructure.queue.tasks.document_tasks."
+                    "get_document_task_dependencies",
+                    context,
+                ),
+                patch.object(
+                    process_document_task,
+                    "retry",
+                    side_effect=Retry(),
+                ) as retry,
+                self.assertRaises(Retry),
+            ):
+                process_document_task.push_request(id="task-id", retries=0)
+                try:
+                    process_document_task.run("document-id")
+                finally:
+                    process_document_task.pop_request()
+        finally:
+            provider.close()
+
+        embed_texts.assert_called_once_with(["Semantic text"])
+        retry.assert_called_once_with(
+            exc=outage,
+            countdown=settings.DOCUMENT_PROCESSING_RETRY_DELAY_SECONDS,
+        )
+        self.assertEqual(document.status, DocumentStatus.QUEUED.value)
+        self.assertEqual(document.error_message, "Document processing failed")
+        self.assertFalse(
+            any(call[0] == "mark_failed" for call in repository.calls)
+        )
 
 
 class DocumentStatusEndpointTests(unittest.TestCase):

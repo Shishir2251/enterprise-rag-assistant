@@ -12,5 +12,34 @@ services:
       retries: 10
     restart: unless-stopped
 
+  embedding-service:
+    build:
+      context: ./embedding_service
+    ports:
+      - "8090:8090"
+    environment:
+      LOCAL_EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
+      LOCAL_EMBEDDING_BATCH_SIZE: "32"
+      LOCAL_EMBEDDING_DEVICE: cpu
+      EMBEDDING_SERVICE_HOST: 0.0.0.0
+      EMBEDDING_SERVICE_PORT: "8090"
+      HF_HOME: /home/embedding/.cache/huggingface
+    volumes:
+      - embedding_model_cache:/home/embedding/.cache/huggingface
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=5)
+      interval: 10s
+      timeout: 5s
+      start_period: 5m
+      retries: 10
+    restart: unless-stopped
+
 volumes:
   redis_data:
+  embedding_model_cache:

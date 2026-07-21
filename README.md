@@ -3,59 +3,116 @@
 FastAPI backend for owner-scoped document ingestion, chunking, pgvector
 storage, embedding, retrieval, and grounded RAG answer generation.
 
-## Local semantic embeddings
+## Embedding architecture
 
-The application supports configuration-based embedding providers:
+The application selects an `IEmbeddingProvider` without changing business
+services:
 
-- `EMBEDDING_PROVIDER=fake` uses deterministic, normalized hash vectors. It
-  requires no API key and is intended for fast architecture tests.
-- `EMBEDDING_PROVIDER=local` uses
-  `sentence-transformers/all-MiniLM-L6-v2` on CPU. It produces real semantic,
-  normalized 384-dimensional vectors without an API key.
-- `EMBEDDING_PROVIDER=openai` uses the configured OpenAI embedding model and is
-  preserved for a later cloud deployment.
+- `EMBEDDING_PROVIDER=fake` uses deterministic test vectors and no API key.
+- `EMBEDDING_PROVIDER=local` keeps the in-process SentenceTransformers option
+  for Linux, macOS, and unrestricted Windows environments.
+- `EMBEDDING_PROVIDER=http` calls the CPU-only Docker embedding service. This
+  is the supported development mode on the managed Windows host.
+- `EMBEDDING_PROVIDER=openai` preserves the later cloud deployment path.
 
-Fake embeddings have limited lexical retrieval quality. They are not
-production-quality semantic embeddings and should not be used to benchmark
-retrieval relevance.
+In Windows development the process boundary is:
 
-Chunks embedded by different providers or models must not be mixed. Retrieval
-filters chunks by both the active provider and model. Missing embeddings and
-model/provider mismatches are treated as stale and regenerated.
-
-Install the local provider dependency:
-
-```powershell
-pip install sentence-transformers
+```text
+FastAPI and Celery on Windows
+        -> HTTP on 127.0.0.1:8090
+Linux Docker embedding-service
+        -> sentence-transformers/all-MiniLM-L6-v2 on CPU
+384-dimensional normalized vectors
+        -> PostgreSQL with pgvector
 ```
 
-The first use may download the configured model. Later runs try the local
-SentenceTransformers cache first and can run without a network connection.
-On managed Windows machines, organization Application Control must permit the
-native wheels used by SentenceTransformers (for example PyTorch and `regex`).
-If policy blocks one of those DLLs, ask the administrator to approve the
-project environment; do not bypass the policy.
+HTTP mode neither needs `OPENAI_API_KEY` nor imports SentenceTransformers in
+the FastAPI or Celery process. The Linux service loads the model once at
+startup and batches `/embed` requests. Direct `local` mode remains available;
+do not use it on a host where enterprise Application Control blocks its native
+Python wheels, and do not bypass that policy.
 
-## Local-mode environment
+Chunks embedded by different providers or models are not mixed. Retrieval is
+owner scoped and filters by the active provider and model. A missing vector or
+a provider/model mismatch is stale and is regenerated during processing or
+reindexing.
+
+## Docker embedding service
+
+The Compose file preserves `redis` and adds `embedding-service`, built from
+`embedding_service/`, published as `8090:8090`, configured for the MiniLM CPU
+model, and guarded by its `/health` check. The named
+`embedding_model_cache` volume persists the Hugging Face cache so the model is
+not downloaded on every container restart.
+
+Its container environment is
+`LOCAL_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2`,
+`LOCAL_EMBEDDING_BATCH_SIZE=32`, `LOCAL_EMBEDDING_DEVICE=cpu`,
+`EMBEDDING_SERVICE_HOST=0.0.0.0`, and `EMBEDDING_SERVICE_PORT=8090`.
+
+The first `docker compose up -d embedding-service` can take longer while
+Docker builds the image, installs the Python dependencies, and downloads the
+model. Later startups use the cached model and should be faster.
+
+Start Redis and the embedding service:
+
+```powershell
+docker compose up -d redis embedding-service
+docker ps
+```
+
+Check service health with either command:
+
+```powershell
+curl http://127.0.0.1:8090/health
+Invoke-RestMethod http://127.0.0.1:8090/health
+```
+
+Expected response:
+
+```json
+{
+  "status": "ok",
+  "model": "sentence-transformers/all-MiniLM-L6-v2",
+  "dimension": 384
+}
+```
+
+Test a query embedding from PowerShell and verify its vector length:
+
+```powershell
+$response = Invoke-RestMethod `
+  -Uri http://127.0.0.1:8090/embed-query `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body '{"query":"When does the football tournament begin?"}'
+
+$response.embedding.Count  # expected: 384
+```
+
+## HTTP-mode environment
+
+Keep the existing database, JWT, Redis, and upload settings, and use this exact
+development embedding configuration:
 
 ```env
-EMBEDDING_PROVIDER=local
+EMBEDDING_PROVIDER=http
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 EMBEDDING_DIMENSION=384
-EMBEDDING_BATCH_SIZE=50
-LOCAL_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-LOCAL_EMBEDDING_BATCH_SIZE=32
-LOCAL_EMBEDDING_DEVICE=cpu
-OPENAI_API_KEY=
+
+HTTP_EMBEDDING_BASE_URL=http://127.0.0.1:8090
+HTTP_EMBEDDING_TIMEOUT_SECONDS=30
+
 RETRIEVAL_TOP_K_DEFAULT=5
 RETRIEVAL_TOP_K_MAX=20
 RETRIEVAL_MIN_SCORE=0.25
+
 LLM_PROVIDER=disabled
+OPENAI_API_KEY=
 ```
 
-Keep the existing database, JWT, Redis, and upload settings. Copy
-`.env.example` when creating a new local environment and replace placeholder
-database/JWT values.
+Copy `.env.example` when creating a new environment and replace its database
+and JWT placeholders. No embedding-service API key is required.
 
 ## Run and test
 
@@ -86,10 +143,10 @@ operations synchronously.
 
 Development startup uses three terminals.
 
-Terminal 1:
+Terminal 1 (Docker Redis and Linux embedding service):
 
 ```powershell
-docker compose up -d redis
+docker compose up -d redis embedding-service
 ```
 
 Terminal 2 (Windows):
@@ -123,16 +180,17 @@ CELERY_TASK_ALWAYS_EAGER=True
 CELERY_TASK_EAGER_PROPAGATES=True
 ```
 
-The default suite excludes the real-model integration marker so it remains
-fast and does not download a model:
+The default suite excludes integration tests so it remains fast and never
+requires a running embedding container or a real model download:
 
 ```powershell
 python -m pytest -v
 python -m pytest --cov=app --cov-report=term-missing
 ```
 
-Run the two real semantic-ranking cases separately (the first run may download
-the model):
+Run integration tests separately after the required embedding runtime is
+available. Direct-local tests may download the model, while HTTP integration
+tests skip cleanly when `http://127.0.0.1:8090` is unavailable:
 
 ```powershell
 python -m pytest -m integration -v
@@ -275,28 +333,56 @@ To remove vectors without deleting chunks, call:
 DELETE /api/v1/documents/{document_id}/embeddings
 ```
 
-## Exact local semantic retrieval test flow
+## Exact HTTP semantic retrieval test flow
 
-1. Set `EMBEDDING_PROVIDER=local`.
-2. Set `EMBEDDING_DIMENSION=384`.
-3. Run `alembic upgrade head`.
-4. Start Redis with `docker compose up -d redis`.
-5. Start the Celery worker with
-   `celery -A app.infrastructure.queue.celery_app.celery_app worker --loglevel=info --pool=solo`.
-6. Start FastAPI with `uvicorn app.main:app --reload`.
-7. Log in and authorize Swagger with the returned JWT.
-8. Upload a new PDF, DOCX, or TXT document.
-9. Poll its status until `status=ready`.
-10. Verify its chunks report the active local embedding model/provider metadata
-    through a database/admin inspection; API responses never expose vectors.
-11. Call retrieval with a semantically related question.
-12. Verify the relevant chunk ranks near the top.
-13. Ask a semantically unrelated query.
-14. Verify its score is lower or the result is filtered by the configured
-    threshold.
-15. Test `POST /api/v1/context/build` with the related question.
-16. Chat may still return `llm_not_configured` because
-    `LLM_PROVIDER=disabled`.
+Use the HTTP-mode environment block above, then run these commands in order:
+
+```powershell
+docker compose up -d redis embedding-service
+alembic upgrade head
+celery -A app.infrastructure.queue.celery_app.celery_app worker --loglevel=info --pool=solo
+uvicorn app.main:app --reload
+```
+
+The Celery and FastAPI commands run in separate terminals and must start even
+when Windows blocks the native `sentence_transformers`/`regex` DLL import,
+because only the Linux container imports that package in HTTP mode.
+
+For a repeatable end-to-end semantic check:
+
+1. Confirm `Invoke-RestMethod http://127.0.0.1:8090/health` reports the MiniLM
+   model and dimension 384.
+2. Run `alembic upgrade head` before processing documents.
+3. Start the Windows Celery worker with the exact command above.
+4. Start FastAPI with the exact command above and open
+   `http://127.0.0.1:8000/docs`.
+5. Register or log in and authorize Swagger with the returned JWT.
+6. Upload a TXT file containing these separate synthetic passages:
+
+   ```text
+   The FIFA World Cup 2026 will be hosted by the United States, Canada, and Mexico.
+   Python is widely used for machine learning and data science.
+   Redis is commonly used for caching and message queues.
+   ```
+
+7. Poll `GET /api/v1/documents/{document_id}/status` until `status=ready`.
+8. Inspect the database in a development/admin session and confirm chunk
+   vectors exist with `embedding_provider=http` and
+   `embedding_model=sentence-transformers/all-MiniLM-L6-v2`. Normal API
+   responses must not expose the vector arrays.
+9. Search with the paraphrase `Which countries are hosting the 2026 football
+   tournament?`; do not use exact phrase matching as the test.
+10. Verify the chunk naming the United States, Canada, and Mexico ranks near
+    the top.
+11. Search for an unrelated subject and verify its score is lower or its result
+    is filtered by `RETRIEVAL_MIN_SCORE`.
+12. Call `POST /api/v1/context/build` with the related question and verify the
+    relevant source context is present.
+13. A chat request may return `status=llm_not_configured` and `answer=null`;
+    that is expected while `LLM_PROVIDER=disabled`.
+14. Queue `POST /api/v1/documents/{document_id}/reindex` twice, waiting for the
+    first run to finish, and confirm the existing chunks are reused rather than
+    duplicated and remain owner scoped.
 
 ## Switching to OpenAI
 
@@ -322,7 +408,8 @@ inserted into `vector(384)`.
 
 5. Run `python -m app.scripts.reindex_embeddings`.
 6. Restart FastAPI and Celery, then verify retrieval. Provider/model filtering
-   excludes anything not produced by the active configuration.
+   excludes anything not produced by the active configuration. No business
+   service change is required.
 
 For a full Phase 8 schema-and-code rollback, the migration downgrade command is
 `alembic downgrade d4a6f21c8b90`; it also clears embeddings and restores

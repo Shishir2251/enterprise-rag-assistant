@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     )
     LOCAL_EMBEDDING_BATCH_SIZE: int = Field(default=32, gt=0)
     LOCAL_EMBEDDING_DEVICE: str = "cpu"
+    HTTP_EMBEDDING_BASE_URL: str = "http://127.0.0.1:8090"
+    HTTP_EMBEDDING_TIMEOUT_SECONDS: int = Field(default=30, gt=0)
     RETRIEVAL_TOP_K_DEFAULT: int = Field(
         default=5,
         gt=0,
@@ -88,6 +90,16 @@ class Settings(BaseSettings):
         normalized_value = value.strip()
         if not normalized_value:
             raise ValueError("Local embedding settings must not be empty")
+        return normalized_value
+
+    @field_validator("HTTP_EMBEDDING_BASE_URL")
+    @classmethod
+    def validate_http_embedding_base_url(cls, value: str) -> str:
+        normalized_value = value.strip().rstrip("/")
+        if not normalized_value:
+            raise ValueError(
+                "HTTP_EMBEDDING_BASE_URL must not be empty"
+            )
         return normalized_value
 
     @model_validator(mode="after")

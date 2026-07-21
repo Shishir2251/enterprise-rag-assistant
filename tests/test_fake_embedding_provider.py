@@ -85,7 +85,7 @@ class FakeEmbeddingProviderTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             ConfigurationError,
-            "Expected 'fake', 'local', or 'openai'",
+            "Expected 'fake', 'local', 'http', or 'openai'",
         ):
             create_embedding_provider(config)
 

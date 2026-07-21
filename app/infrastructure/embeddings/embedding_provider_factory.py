@@ -36,6 +36,17 @@ def create_embedding_provider(
             batch_size=config.LOCAL_EMBEDDING_BATCH_SIZE,
             device=config.LOCAL_EMBEDDING_DEVICE,
         )
+    if provider_name == "http":
+        from app.infrastructure.embeddings.http_embedding_provider import (
+            HTTPEmbeddingProvider,
+        )
+
+        return HTTPEmbeddingProvider(
+            base_url=config.HTTP_EMBEDDING_BASE_URL,
+            model_name=config.EMBEDDING_MODEL,
+            dimensions=config.EMBEDDING_DIMENSION,
+            timeout_seconds=config.HTTP_EMBEDDING_TIMEOUT_SECONDS,
+        )
     if provider_name == "openai":
         from app.infrastructure.embeddings.openai_embedding_provider import (
             OpenAIEmbeddingProvider,
@@ -53,5 +64,6 @@ def create_embedding_provider(
         )
 
     raise ConfigurationError(
-        "Unsupported EMBEDDING_PROVIDER. Expected 'fake', 'local', or 'openai'"
+        "Unsupported EMBEDDING_PROVIDER. Expected 'fake', 'local', 'http', "
+        "or 'openai'"
     )
