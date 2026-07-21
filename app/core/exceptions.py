@@ -46,8 +46,20 @@ class LLMError(ApplicationError):
     """Raised when an LLM provider returns an invalid result."""
 
 
+class LLMProviderError(LLMError):
+    """Raised when a configured LLM provider request fails safely."""
+
+
+class LLMTimeoutError(LLMProviderError):
+    """Raised when a configured LLM provider request times out."""
+
+
 class ConfigurationError(ApplicationError):
     """Raised when a required application integration is not configured."""
+
+
+class LLMConfigurationError(ConfigurationError):
+    """Raised when LLM provider configuration is missing or invalid."""
 
 
 class QueueUnavailableError(ApplicationError):

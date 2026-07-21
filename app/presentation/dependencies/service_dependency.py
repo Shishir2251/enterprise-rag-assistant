@@ -17,16 +17,21 @@ from app.business.interfaces.embedding_provider_interface import (
 from app.business.interfaces.file_storage_interface import IFileStorage
 from app.business.interfaces.ingestion_service_interface import IIngestionService
 from app.business.interfaces.llm_provider_interface import ILLMProvider
+from app.business.interfaces.prompt_builder_interface import IPromptBuilder
 from app.business.interfaces.retrieval_service_interface import (
     IRetrievalService,
 )
 from app.business.services.auth_service import AuthService
 from app.business.services.chat_service import ChatService
+from app.business.services.citation_parser_service import (
+    CitationParserService,
+)
 from app.business.services.chunking_service import ChunkingService
 from app.business.services.context_builder_service import ContextBuilderService
 from app.business.services.document_service import DocumentService
 from app.business.services.embedding_service import EmbeddingService
 from app.business.services.ingestion_service import IngestionService
+from app.business.services.prompt_builder_service import PromptBuilderService
 from app.business.services.retrieval_service import RetrievalService
 from app.core.config import settings
 from app.data_access.interfaces.chat_message_repository_interface import (
@@ -194,7 +199,19 @@ def get_retrieval_service(
 
 
 def get_context_builder_service() -> IContextBuilder:
-    return ContextBuilderService()
+    return ContextBuilderService(
+        max_context_characters=settings.MAX_CONTEXT_CHARACTERS
+    )
+
+
+def get_prompt_builder_service() -> IPromptBuilder:
+    return PromptBuilderService(
+        history_max_messages=settings.CHAT_HISTORY_MAX_MESSAGES
+    )
+
+
+def get_citation_parser_service() -> CitationParserService:
+    return CitationParserService()
 
 
 def get_chat_service(
@@ -207,6 +224,10 @@ def get_chat_service(
     retrieval_service: IRetrievalService = Depends(get_retrieval_service),
     context_builder: IContextBuilder = Depends(get_context_builder_service),
     llm_provider: ILLMProvider = Depends(get_llm_provider),
+    prompt_builder: IPromptBuilder = Depends(get_prompt_builder_service),
+    citation_parser: CitationParserService = Depends(
+        get_citation_parser_service
+    ),
 ) -> IChatService:
     return ChatService(
         session_repository=session_repository,
@@ -214,4 +235,7 @@ def get_chat_service(
         retrieval_service=retrieval_service,
         context_builder=context_builder,
         llm_provider=llm_provider,
+        prompt_builder=prompt_builder,
+        citation_parser=citation_parser,
+        history_max_messages=settings.CHAT_HISTORY_MAX_MESSAGES,
     )

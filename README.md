@@ -1,7 +1,7 @@
 # Enterprise RAG Assistant
 
 FastAPI backend for owner-scoped document ingestion, chunking, pgvector
-storage, embedding, retrieval, and grounded context preparation.
+storage, embedding, retrieval, and grounded RAG answer generation.
 
 ## Development embeddings
 
@@ -119,13 +119,21 @@ endpoint.
 `POST /api/v1/context/build` returns retrieved source context and
 `llm_status=not_configured`; it does not call an LLM or fabricate an answer.
 
-## Chat scaffolding
+## Grounded chat
 
 Chat sessions and conversation messages are persisted in PostgreSQL. The
-default configuration is:
+default configuration disables generation while leaving owner-scoped retrieval
+and citation inspection available:
 
 ```env
-LLM_PROVIDER=none
+LLM_PROVIDER=disabled
+LLM_MODEL=gpt-4.1-mini
+LLM_TEMPERATURE=0.1
+LLM_MAX_OUTPUT_TOKENS=1200
+LLM_TIMEOUT_SECONDS=30
+MAX_CONTEXT_CHARACTERS=12000
+CHAT_HISTORY_MAX_MESSAGES=10
+OPENAI_API_KEY=
 ```
 
 In this mode, sending a chat message still uses the owner-scoped
@@ -140,7 +148,28 @@ metadata. It deliberately returns:
 ```
 
 The user message is persisted before retrieval. No assistant message is
-persisted unless a configured provider returns a real, non-empty answer.
+persisted unless a configured provider returns a real, non-empty answer. If
+retrieval supplies no usable context, the provider is not called and the
+assistant persists the deterministic insufficient-context response.
+
+With OpenAI generation enabled, use:
+
+```env
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-4.1-mini
+LLM_TEMPERATURE=0.1
+LLM_MAX_OUTPUT_TOKENS=1200
+LLM_TIMEOUT_SECONDS=30
+MAX_CONTEXT_CHARACTERS=12000
+CHAT_HISTORY_MAX_MESSAGES=10
+OPENAI_API_KEY=<real-key>
+```
+
+Restart FastAPI after changing provider configuration. Retrieved document text
+is placed only in the user prompt as untrusted evidence. The system prompt
+forbids outside knowledge, document-borne instructions, fabricated facts, and
+fabricated source numbers. Returned citation metadata is limited to valid
+`[SOURCE n]` markers actually used in the answer.
 
 Chat API flow:
 
@@ -148,6 +177,35 @@ Chat API flow:
 2. `POST /api/v1/chat/sessions/{session_id}/messages`
 3. `GET /api/v1/chat/sessions/{session_id}/messages`
 4. `GET /api/v1/chat/sessions`
+
+## Exact Swagger chat test
+
+Start Redis, the Celery worker, and FastAPI as shown above, then open
+`http://localhost:8000/docs`.
+
+1. Call `POST /api/v1/auth/register` if a test user does not exist.
+2. Call `POST /api/v1/auth/login`, copy `access_token`, select **Authorize**,
+   and enter the bearer token.
+3. Call `POST /api/v1/documents/upload` with a PDF, DOCX, or TXT file. Save the
+   returned document ID.
+4. Poll `GET /api/v1/documents/{document_id}/status` until `status` is `ready`.
+5. Call `POST /api/v1/chat/sessions` and save the returned session ID.
+6. Call `POST /api/v1/chat/sessions/{session_id}/messages` with a question whose
+   answer appears in the uploaded document. In disabled mode, verify
+   `status=llm_not_configured`, `answer=null`, and
+   `assistant_message_id=null`.
+7. For OpenAI mode, restart the API with the OpenAI environment block above and
+   repeat step 6. Verify `status=completed`, a non-empty answer, a non-null
+   `assistant_message_id`, and citations whose source numbers and metadata
+   correspond to source markers in the answer.
+8. Ask a question for which retrieval returns no chunks above
+   `RETRIEVAL_MIN_SCORE`. Verify the exact answer
+   `I could not find enough information in the provided documents.`,
+   `status=completed`, and an empty citation list.
+
+Use `GET /api/v1/chat/sessions/{session_id}/messages` to confirm that user turns
+are retained after generation failures and assistant turns exist only for
+successful or deterministic no-context answers.
 
 To remove vectors without deleting chunks, call:
 
@@ -172,3 +230,8 @@ DELETE /api/v1/documents/{document_id}/embeddings
 4. Call the document embed endpoint again for each cleared document.
 5. Verify retrieval; model filtering prevents old fake vectors from being
    compared with OpenAI query vectors.
+
+Embedding and LLM providers are configured independently. OpenAI answer
+generation does not require changing `EMBEDDING_PROVIDER`; fake embeddings can
+exercise the architecture locally, but they are not a measure of semantic
+retrieval quality.

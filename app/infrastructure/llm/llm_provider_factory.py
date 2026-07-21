@@ -9,7 +9,25 @@ def create_llm_provider(config: Settings = settings) -> ILLMProvider:
 
     if provider_name in {"none", "disabled"}:
         return NoLLMProvider()
+    if provider_name == "openai":
+        from app.infrastructure.llm.openai_llm_provider import (
+            OpenAILLMProvider,
+        )
+
+        configured_api_key = config.OPENAI_API_KEY
+        api_key = (
+            configured_api_key.get_secret_value()
+            if configured_api_key is not None
+            else ""
+        )
+        return OpenAILLMProvider(
+            api_key=api_key,
+            model_name=config.LLM_MODEL,
+            temperature=config.LLM_TEMPERATURE,
+            max_output_tokens=config.LLM_MAX_OUTPUT_TOKENS,
+            timeout_seconds=config.LLM_TIMEOUT_SECONDS,
+        )
 
     raise ConfigurationError(
-        "Unsupported LLM_PROVIDER. Only 'none' is currently available"
+        "Unsupported LLM_PROVIDER. Expected 'disabled' or 'openai'"
     )

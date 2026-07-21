@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
-from app.business.dtos.llm_dto import LLMGenerationResult, LLMMessageDTO
+from app.business.dtos.llm_dto import LLMMessageDTO, LLMResponseDTO
 
 
 class ILLMProvider(ABC):
@@ -11,12 +11,17 @@ class ILLMProvider(ABC):
     def provider_name(self) -> str:
         raise NotImplementedError
 
+    @property
     @abstractmethod
-    def generate_answer(
-        self,
-        query: str,
-        context: str,
-        conversation_history: Sequence[LLMMessageDTO],
-    ) -> LLMGenerationResult:
+    def is_configured(self) -> bool:
         raise NotImplementedError
 
+    @abstractmethod
+    def generate(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        conversation_history: Sequence[LLMMessageDTO],
+    ) -> LLMResponseDTO:
+        raise NotImplementedError

@@ -1,7 +1,12 @@
 from collections.abc import Sequence
 
-from app.business.dtos.llm_dto import LLMGenerationResult, LLMMessageDTO
+from app.business.dtos.llm_dto import (
+    LLMGenerationResult,
+    LLMMessageDTO,
+    LLMResponseDTO,
+)
 from app.business.interfaces.llm_provider_interface import ILLMProvider
+from app.core.exceptions import LLMConfigurationError
 
 
 class NoLLMProvider(ILLMProvider):
@@ -9,7 +14,21 @@ class NoLLMProvider(ILLMProvider):
 
     @property
     def provider_name(self) -> str:
-        return "none"
+        return "disabled"
+
+    @property
+    def is_configured(self) -> bool:
+        return False
+
+    def generate(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        conversation_history: Sequence[LLMMessageDTO],
+    ) -> LLMResponseDTO:
+        del system_prompt, user_prompt, conversation_history
+        raise LLMConfigurationError("LLM provider is not configured.")
 
     def generate_answer(
         self,
@@ -22,4 +41,3 @@ class NoLLMProvider(ILLMProvider):
             status="llm_not_configured",
             answer=None,
         )
-

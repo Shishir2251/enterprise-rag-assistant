@@ -22,8 +22,13 @@ def create_embedding_provider(
             model_name=config.EMBEDDING_MODEL,
         )
     if provider_name == "openai":
+        configured_api_key = config.OPENAI_API_KEY
         return OpenAIEmbeddingProvider(
-            api_key=config.OPENAI_API_KEY.get_secret_value(),
+            api_key=(
+                configured_api_key.get_secret_value()
+                if configured_api_key is not None
+                else ""
+            ),
             model_name=config.EMBEDDING_MODEL,
             dimensions=config.EMBEDDING_DIMENSION,
         )

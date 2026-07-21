@@ -9,7 +9,7 @@ from sqlalchemy.dialects import postgresql
 
 from app.business.dtos.chat_turn_dto import ChatTurnDTO
 from app.business.dtos.context_source_dto import ContextSourceDTO
-from app.business.dtos.llm_dto import LLMGenerationResult
+from app.business.dtos.llm_dto import LLMResponseDTO
 from app.business.dtos.retrieval_result_dto import RetrievalResult
 from app.business.services.chat_service import ChatService
 from app.business.services.context_builder_service import ContextBuilderService
@@ -124,14 +124,22 @@ class FakeRetrievalService:
 
 class AnsweringLLMProvider:
     provider_name = "test"
+    is_configured = True
 
-    def __init__(self, answer: str = "A grounded answer.") -> None:
+    def __init__(
+        self,
+        answer: str = "A grounded answer. [SOURCE 1]",
+    ) -> None:
         self.answer = answer
         self.calls: list[dict] = []
 
-    def generate_answer(self, **kwargs) -> LLMGenerationResult:
+    def generate(self, **kwargs) -> LLMResponseDTO:
         self.calls.append(kwargs)
-        return LLMGenerationResult(status="completed", answer=self.answer)
+        return LLMResponseDTO(
+            content=self.answer,
+            provider="test",
+            model="test-model",
+        )
 
 
 class ChatServiceTests(unittest.TestCase):
@@ -209,14 +217,14 @@ class ChatServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(result.status, "completed")
-        self.assertEqual(result.answer, "A grounded answer.")
+        self.assertEqual(result.answer, "A grounded answer. [SOURCE 1]")
         self.assertEqual(result.assistant_message_id, "message-2")
         self.assertEqual(
             [message.role for message in message_repository.messages],
             ["user", "assistant"],
         )
         assistant = message_repository.messages[1]
-        self.assertEqual(assistant.content, "A grounded answer.")
+        self.assertEqual(assistant.content, "A grounded answer. [SOURCE 1]")
         self.assertEqual(
             assistant.citations[0]["document_name"],
             "architecture.pdf",
