@@ -67,6 +67,11 @@ class ChunkingService(IChunkingService):
 
     @staticmethod
     def _normalize_text(text: str) -> str:
+        # UTF-8 text files decoded with ``utf-8`` retain U+FEFF as the first
+        # character. It is an encoding marker, not document content, so drop
+        # one leading BOM before calculating chunk boundaries.
+        text = text.removeprefix("\ufeff")
+
         # PostgreSQL text values cannot contain the NUL character. Some PDF
         # extractors preserve embedded NULs from malformed font mappings, so
         # remove them at the text-normalization boundary before persistence.

@@ -1,0 +1,9 @@
+﻿The FIFA World Cup 2026 will be hosted by the United States, Canada, and Mexico.
+
+The tournament begins in June 2026.
+
+Python is widely used for machine learning and data science.
+
+Redis is commonly used for caching and message queues.
+
+PostgreSQL is a relational database management system.

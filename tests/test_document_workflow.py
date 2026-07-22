@@ -388,6 +388,26 @@ class DocumentWorkflowTests(unittest.TestCase):
         self.assertEqual(chunks[0].character_count, 17)
         self.assertNotIn("\x00", chunks[0].content)
 
+    def test_chunking_removes_leading_utf8_bom(self) -> None:
+        chunks = ChunkingService(
+            chunk_size=100,
+            chunk_overlap=0,
+        ).create_chunks(
+            ExtractedDocument(
+                pages=[
+                    ExtractedPage(
+                        page_number=1,
+                        content="\ufeffFirst line\nSecond line",
+                    )
+                ]
+            )
+        )
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].content, "First line\nSecond line")
+        self.assertEqual(chunks[0].character_count, 22)
+        self.assertFalse(chunks[0].content.startswith("\ufeff"))
+
     def test_processing_checks_ownership_and_completes(self) -> None:
         with tempfile.NamedTemporaryFile(suffix=".txt") as uploaded_file:
             document = DocumentModel(
