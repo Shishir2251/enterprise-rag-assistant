@@ -22,6 +22,14 @@ class IChatSessionRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def touch(self, session: ChatSessionModel) -> ChatSessionModel:
+    def update_title(
+        self,
+        session_id: str,
+        owner_id: str,
+        title: str,
+    ) -> ChatSessionModel | None:
         raise NotImplementedError
 
+    @abstractmethod
+    def touch(self, session: ChatSessionModel) -> ChatSessionModel:
+        raise NotImplementedError

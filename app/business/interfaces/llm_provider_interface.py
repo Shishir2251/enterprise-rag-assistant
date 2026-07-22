@@ -17,11 +17,13 @@ class ILLMProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def generate(
+    async def generate(
         self,
         *,
         system_prompt: str,
         user_prompt: str,
         conversation_history: Sequence[LLMMessageDTO],
+        max_output_tokens: int | None = None,
+        temperature: float | None = None,
     ) -> LLMResponseDTO:
         raise NotImplementedError

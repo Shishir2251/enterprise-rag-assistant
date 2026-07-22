@@ -47,13 +47,24 @@ class Settings(BaseSettings):
     # RETRIEVAL_TOP_K_DEFAULT yet.
     RETRIEVAL_TOP_K: int = Field(default=5, gt=0)
     RETRIEVAL_MIN_SCORE: float = Field(default=0.30, ge=0.0, le=1.0)
-    LLM_PROVIDER: str = "disabled"
-    LLM_MODEL: str = "gpt-4.1-mini"
-    LLM_TEMPERATURE: float = Field(default=0.1, ge=0.0, le=2.0)
-    LLM_MAX_OUTPUT_TOKENS: int = Field(default=1200, gt=0)
-    LLM_TIMEOUT_SECONDS: int = Field(default=30, gt=0)
+    LLM_PROVIDER: str = "fake"
+    LLM_MODEL: str = Field(
+        default="gpt-4.1-mini",
+        validation_alias=AliasChoices("OPENAI_CHAT_MODEL", "LLM_MODEL"),
+    )
+    FAKE_LLM_MODEL: str = "fake-grounded-llm-v1"
+    LLM_TEMPERATURE: float = Field(default=0.0, ge=0.0, le=2.0)
+    LLM_MAX_OUTPUT_TOKENS: int = Field(default=800, gt=0)
+    LLM_TIMEOUT_SECONDS: int = Field(default=45, gt=0)
     MAX_CONTEXT_CHARACTERS: int = Field(default=12000, gt=0)
     CHAT_HISTORY_MAX_MESSAGES: int = Field(default=10, ge=0)
+    CHAT_HISTORY_MAX_CHARACTERS: int = Field(default=6000, ge=0)
+    CHAT_CONTEXT_MAX_CHARACTERS: int = Field(default=12000, gt=0)
+    CHAT_DEFAULT_TOP_K: int = Field(default=5, gt=0)
+    CHAT_MAX_TOP_K: int = Field(default=10, gt=0)
+    CHAT_NO_CONTEXT_MESSAGE: str = (
+        "I could not find enough information in the selected documents."
+    )
 
     REDIS_URL: str = "redis://localhost:6379/0"
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
@@ -102,12 +113,40 @@ class Settings(BaseSettings):
             )
         return normalized_value
 
+    @field_validator("LLM_PROVIDER")
+    @classmethod
+    def normalize_llm_provider(cls, value: str) -> str:
+        normalized_value = value.strip().lower()
+        if not normalized_value:
+            raise ValueError("LLM_PROVIDER must not be empty")
+        return normalized_value
+
+    @field_validator("LLM_MODEL", "FAKE_LLM_MODEL")
+    @classmethod
+    def validate_llm_model(cls, value: str) -> str:
+        normalized_value = value.strip()
+        if not normalized_value:
+            raise ValueError("LLM model settings must not be empty")
+        return normalized_value
+
+    @field_validator("CHAT_NO_CONTEXT_MESSAGE")
+    @classmethod
+    def validate_chat_no_context_message(cls, value: str) -> str:
+        normalized_value = value.strip()
+        if not normalized_value:
+            raise ValueError("CHAT_NO_CONTEXT_MESSAGE must not be empty")
+        return normalized_value
+
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
         if self.RETRIEVAL_TOP_K_DEFAULT > self.RETRIEVAL_TOP_K_MAX:
             raise ValueError(
                 "RETRIEVAL_TOP_K_DEFAULT must not exceed "
                 "RETRIEVAL_TOP_K_MAX"
+            )
+        if self.CHAT_DEFAULT_TOP_K > self.CHAT_MAX_TOP_K:
+            raise ValueError(
+                "CHAT_DEFAULT_TOP_K must not exceed CHAT_MAX_TOP_K"
             )
         if self.APP_ENV.lower() == "production":
             if self.APP_DEBUG:
@@ -118,6 +157,12 @@ class Settings(BaseSettings):
                     "in production"
                 )
         return self
+
+    @property
+    def OPENAI_CHAT_MODEL(self) -> str:
+        """Canonical Phase 9 name for the legacy LLM_MODEL setting."""
+
+        return self.LLM_MODEL
 
 
 settings = Settings()

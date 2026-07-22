@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from collections.abc import Sequence
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -35,6 +36,19 @@ class DocumentRepository(IDocumentRepository):
         )
 
         return self.db.scalar(statement)
+
+    def list_by_ids(
+        self,
+        document_ids: Sequence[str],
+        owner_id: str,
+    ) -> list[DocumentModel]:
+        if not document_ids:
+            return []
+        statement = select(DocumentModel).where(
+            DocumentModel.owner_id == owner_id,
+            DocumentModel.id.in_(tuple(document_ids)),
+        )
+        return list(self.db.scalars(statement).all())
 
     def get_by_id_internal(
         self,

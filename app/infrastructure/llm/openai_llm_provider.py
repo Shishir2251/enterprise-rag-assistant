@@ -1,13 +1,6 @@
 import logging
 from collections.abc import Sequence
-
-from openai import APIConnectionError
-from openai import APIStatusError
-from openai import APITimeoutError
-from openai import AuthenticationError as OpenAIAuthenticationError
-from openai import OpenAI
-from openai import OpenAIError
-from openai import RateLimitError
+from importlib import import_module
 
 from app.business.dtos.llm_dto import LLMMessageDTO, LLMResponseDTO
 from app.business.interfaces.llm_provider_interface import ILLMProvider
@@ -51,7 +44,8 @@ class OpenAILLMProvider(ILLMProvider):
         temperature: float,
         max_output_tokens: int,
         timeout_seconds: int,
-        client: OpenAI | None = None,
+        client: object | None = None,
+        sdk: object | None = None,
     ) -> None:
         normalized_api_key = api_key.strip() if isinstance(api_key, str) else ""
         normalized_model_name = (
@@ -90,14 +84,24 @@ class OpenAILLMProvider(ILLMProvider):
         self._temperature = float(temperature)
         self._max_output_tokens = max_output_tokens
         self._timeout_seconds = timeout_seconds
-        self._client = (
-            client
-            if client is not None
-            else OpenAI(
-                api_key=normalized_api_key,
-                timeout=float(timeout_seconds),
+        try:
+            self._sdk = sdk if sdk is not None else import_module("openai")
+            self._client = (
+                client
+                if client is not None
+                else self._sdk.AsyncOpenAI(
+                    api_key=normalized_api_key,
+                    timeout=float(timeout_seconds),
+                )
             )
-        )
+        except Exception as exc:
+            logger.error(
+                "OpenAI LLM client construction failed (%s)",
+                type(exc).__name__,
+            )
+            raise LLMConfigurationError(
+                "LLM provider is not configured."
+            ) from exc
 
     @property
     def provider_name(self) -> str:
@@ -111,12 +115,14 @@ class OpenAILLMProvider(ILLMProvider):
     def model_name(self) -> str:
         return self._model_name
 
-    def generate(
+    async def generate(
         self,
         *,
         system_prompt: str,
         user_prompt: str,
         conversation_history: Sequence[LLMMessageDTO],
+        max_output_tokens: int | None = None,
+        temperature: float | None = None,
     ) -> LLMResponseDTO:
         normalized_system_prompt = (
             system_prompt.strip() if isinstance(system_prompt, str) else ""
@@ -126,6 +132,10 @@ class OpenAILLMProvider(ILLMProvider):
         )
         if not normalized_system_prompt or not normalized_user_prompt:
             raise LLMProviderError("LLM provider request failed.")
+        effective_max_output_tokens = self._effective_max_output_tokens(
+            max_output_tokens
+        )
+        effective_temperature = self._effective_temperature(temperature)
 
         input_messages = self._build_input_messages(
             conversation_history=conversation_history,
@@ -133,27 +143,31 @@ class OpenAILLMProvider(ILLMProvider):
         )
 
         try:
-            response = self._client.responses.create(
+            response = await self._client.responses.create(
                 model=self._model_name,
                 instructions=normalized_system_prompt,
                 input=input_messages,
-                temperature=self._temperature,
-                max_output_tokens=self._max_output_tokens,
+                temperature=effective_temperature,
+                max_output_tokens=effective_max_output_tokens,
                 timeout=float(self._timeout_seconds),
                 store=False,
             )
-        except OpenAIAuthenticationError as exc:
+        except self._sdk.AuthenticationError as exc:
             logger.warning("OpenAI LLM authentication failed")
             raise LLMConfigurationError(
                 "LLM provider is not configured."
             ) from exc
-        except APITimeoutError as exc:
+        except self._sdk.APITimeoutError as exc:
             logger.warning("OpenAI LLM request timed out")
             raise LLMTimeoutError("LLM provider timed out.") from exc
-        except RateLimitError as exc:
+        except self._sdk.RateLimitError as exc:
             logger.warning("OpenAI LLM request was rate limited")
             raise LLMProviderError("LLM provider request failed.") from exc
-        except (APIConnectionError, APIStatusError, OpenAIError) as exc:
+        except (
+            self._sdk.APIConnectionError,
+            self._sdk.APIStatusError,
+            self._sdk.OpenAIError,
+        ) as exc:
             logger.error(
                 "OpenAI LLM request failed (%s)",
                 type(exc).__name__,
@@ -167,6 +181,24 @@ class OpenAILLMProvider(ILLMProvider):
             raise LLMProviderError("LLM provider request failed.") from exc
 
         return self._normalize_response(response)
+
+    def _effective_max_output_tokens(self, value: int | None) -> int:
+        if value is None:
+            return self._max_output_tokens
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise LLMProviderError("LLM provider request failed.")
+        return value
+
+    def _effective_temperature(self, value: float | None) -> float:
+        if value is None:
+            return self._temperature
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not 0.0 <= value <= 2.0
+        ):
+            raise LLMProviderError("LLM provider request failed.")
+        return float(value)
 
     @staticmethod
     def _build_input_messages(

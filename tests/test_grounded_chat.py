@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
@@ -204,7 +205,7 @@ class PromptBuilderServiceTests(unittest.TestCase):
         )
         self.assertEqual(
             INSUFFICIENT_CONTEXT_FALLBACK,
-            "I could not find enough information in the provided documents.",
+            "I could not find enough information in the selected documents.",
         )
         self.assertIn(context, prompt.user_prompt)
         self.assertIn("[SOURCE 1]", prompt.user_prompt)
@@ -329,10 +330,12 @@ class GroundedChatServiceTests(unittest.TestCase):
             retrieval_results=[make_result(1), make_result(2)],
         )
 
-        result = service.send_message(
-            "session-id",
-            "owner-id",
-            "What evidence is available?",
+        result = asyncio.run(
+            service.send_message(
+                "session-id",
+                "owner-id",
+                "What evidence is available?",
+            )
         )
 
         self.assertEqual(result.status, "completed")
@@ -354,6 +357,9 @@ class GroundedChatServiceTests(unittest.TestCase):
             99,
             [citation["source_number"] for citation in persisted_citations],
         )
+        self.assertTrue(
+            all("content" not in citation for citation in persisted_citations)
+        )
         self.assertIn("untrusted data", provider.calls[0]["system_prompt"].lower())
         self.assertIn("[SOURCE 1]", provider.calls[0]["user_prompt"])
         self.assertIn("[SOURCE 2]", provider.calls[0]["user_prompt"])
@@ -367,10 +373,12 @@ class GroundedChatServiceTests(unittest.TestCase):
             retrieval_results=[],
         )
 
-        result = service.send_message(
-            "session-id",
-            "owner-id",
-            "What evidence is available?",
+        result = asyncio.run(
+            service.send_message(
+                "session-id",
+                "owner-id",
+                "What evidence is available?",
+            )
         )
 
         self.assertEqual(result.status, "completed")
@@ -395,10 +403,12 @@ class GroundedChatServiceTests(unittest.TestCase):
         )
 
         with self.assertRaises(LLMProviderError) as captured:
-            service.send_message(
-                "session-id",
-                "owner-id",
-                "Persist this question before generation",
+            asyncio.run(
+                service.send_message(
+                    "session-id",
+                    "owner-id",
+                    "Persist this question before generation",
+                )
             )
 
         self.assertEqual(
@@ -438,10 +448,12 @@ class GroundedChatServiceTests(unittest.TestCase):
                 )
             )
 
-        service.send_message(
-            "session-id",
-            "owner-id",
-            "Current question",
+        asyncio.run(
+            service.send_message(
+                "session-id",
+                "owner-id",
+                "Current question",
+            )
         )
 
         history = provider.calls[0]["conversation_history"]
@@ -467,10 +479,12 @@ class GroundedChatServiceTests(unittest.TestCase):
             retrieval_results=[make_result(1), make_result(2)],
         )
 
-        result = service.send_message(
-            "session-id",
-            "owner-id",
-            "What evidence is available?",
+        result = asyncio.run(
+            service.send_message(
+                "session-id",
+                "owner-id",
+                "What evidence is available?",
+            )
         )
 
         self.assertEqual(result.citations, ())

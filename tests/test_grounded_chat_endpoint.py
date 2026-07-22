@@ -94,6 +94,8 @@ class GroundedChatEndpointTests(unittest.TestCase):
                 "status": "completed",
                 "answer": INSUFFICIENT_CONTEXT_FALLBACK,
                 "citations": [],
+                "llm_provider": None,
+                "llm_model": None,
             },
         )
 

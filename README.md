@@ -107,7 +107,8 @@ RETRIEVAL_TOP_K_DEFAULT=5
 RETRIEVAL_TOP_K_MAX=20
 RETRIEVAL_MIN_SCORE=0.25
 
-LLM_PROVIDER=disabled
+LLM_PROVIDER=fake
+FAKE_LLM_MODEL=fake-grounded-llm-v1
 OPENAI_API_KEY=
 ```
 
@@ -123,7 +124,7 @@ and JWT placeholders. No embedding-service API key is required.
 Apply all database migrations:
 
 ```powershell
-alembic upgrade head
+python -m alembic upgrade head
 ```
 
 The Phase 8 migration clears only disposable embedding values and their
@@ -152,13 +153,13 @@ docker compose up -d redis embedding-service
 Terminal 2 (Windows):
 
 ```powershell
-celery -A app.infrastructure.queue.celery_app.celery_app worker --loglevel=info --pool=solo
+python -m celery -A app.infrastructure.queue.celery_app.celery_app worker --loglevel=info --pool=solo
 ```
 
 Terminal 3:
 
 ```powershell
-uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload
 ```
 
 Required queue configuration:
@@ -242,23 +243,30 @@ endpoint.
 ## Grounded chat
 
 Chat sessions and conversation messages are persisted in PostgreSQL. The
-default configuration disables generation while leaving owner-scoped retrieval
-and citation inspection available:
+default configuration uses deterministic local generation, with no OpenAI key
+or LLM network request required:
 
 ```env
-LLM_PROVIDER=disabled
-LLM_MODEL=gpt-4.1-mini
-LLM_TEMPERATURE=0.1
-LLM_MAX_OUTPUT_TOKENS=1200
-LLM_TIMEOUT_SECONDS=30
-MAX_CONTEXT_CHARACTERS=12000
+LLM_PROVIDER=fake
+FAKE_LLM_MODEL=fake-grounded-llm-v1
+OPENAI_CHAT_MODEL=gpt-4.1-mini
+LLM_TEMPERATURE=0
+LLM_MAX_OUTPUT_TOKENS=800
+LLM_TIMEOUT_SECONDS=45
+CHAT_CONTEXT_MAX_CHARACTERS=12000
 CHAT_HISTORY_MAX_MESSAGES=10
+CHAT_HISTORY_MAX_CHARACTERS=6000
+CHAT_DEFAULT_TOP_K=5
+CHAT_MAX_TOP_K=10
 OPENAI_API_KEY=
 ```
 
-In this mode, sending a chat message still uses the owner-scoped
-`RetrievalService` and `ContextBuilderService`, and returns retrieved citation
-metadata. It deliberately returns:
+Fake mode uses the owner-scoped `RetrievalService` and
+`ContextBuilderService`, selects evidence deterministically, returns a concise
+answer with a valid `[SOURCE n]` marker, and persists only validated citation
+metadata. To exercise retrieval without generation, set
+`LLM_PROVIDER=disabled`. For backward compatibility, the existing
+`POST /api/v1/chat/sessions/{session_id}/messages` route returns HTTP 200 with:
 
 ```json
 {
@@ -267,21 +275,26 @@ metadata. It deliberately returns:
 }
 ```
 
-The user message is persisted before retrieval. No assistant message is
-persisted unless a configured provider returns a real, non-empty answer. If
-retrieval supplies no usable context, the provider is not called and the
-assistant persists the deterministic insufficient-context response.
+The new `POST /api/v1/chat` route instead maps that configured-but-disabled
+state to HTTP 503 with the sanitized detail `LLM provider is not configured.`
+Both paths persist the user message and do not persist an assistant message.
+
+The user message is persisted before retrieval. If generation fails, no fake
+completed assistant message is persisted. If retrieval supplies no usable
+context, the provider is not called and the assistant persists the exact
+deterministic insufficient-context response.
 
 With OpenAI generation enabled, use:
 
 ```env
 LLM_PROVIDER=openai
-LLM_MODEL=gpt-4.1-mini
-LLM_TEMPERATURE=0.1
-LLM_MAX_OUTPUT_TOKENS=1200
-LLM_TIMEOUT_SECONDS=30
-MAX_CONTEXT_CHARACTERS=12000
+OPENAI_CHAT_MODEL=gpt-4.1-mini
+LLM_TEMPERATURE=0
+LLM_MAX_OUTPUT_TOKENS=800
+LLM_TIMEOUT_SECONDS=45
+CHAT_CONTEXT_MAX_CHARACTERS=12000
 CHAT_HISTORY_MAX_MESSAGES=10
+CHAT_HISTORY_MAX_CHARACTERS=6000
 OPENAI_API_KEY=<real-key>
 ```
 
@@ -293,10 +306,14 @@ fabricated source numbers. Returned citation metadata is limited to valid
 
 Chat API flow:
 
-1. `POST /api/v1/chat/sessions`
-2. `POST /api/v1/chat/sessions/{session_id}/messages`
-3. `GET /api/v1/chat/sessions/{session_id}/messages`
-4. `GET /api/v1/chat/sessions`
+1. `POST /api/v1/chat` creates or continues a grounded conversation.
+2. `GET /api/v1/conversations` lists owned conversations.
+3. `GET /api/v1/conversations/{conversation_id}` returns conversation detail.
+4. `GET /api/v1/conversations/{conversation_id}/messages` returns messages.
+
+The existing `/api/v1/chat/sessions` routes remain supported. Complete setup,
+security behavior, Windows-safe commands, and manual acceptance examples are
+documented in [Phase 9 grounded chat](docs/phase_9_grounded_chat.md).
 
 ## Exact Swagger chat test
 
@@ -309,18 +326,21 @@ Start Redis, the Celery worker, and FastAPI as shown above, then open
 3. Call `POST /api/v1/documents/upload` with a PDF, DOCX, or TXT file. Save the
    returned document ID.
 4. Poll `GET /api/v1/documents/{document_id}/status` until `status` is `ready`.
-5. Call `POST /api/v1/chat/sessions` and save the returned session ID.
-6. Call `POST /api/v1/chat/sessions/{session_id}/messages` with a question whose
-   answer appears in the uploaded document. In disabled mode, verify
-   `status=llm_not_configured`, `answer=null`, and
-   `assistant_message_id=null`.
-7. For OpenAI mode, restart the API with the OpenAI environment block above and
-   repeat step 6. Verify `status=completed`, a non-empty answer, a non-null
-   `assistant_message_id`, and citations whose source numbers and metadata
-   correspond to source markers in the answer.
+5. Call `POST /api/v1/chat` with the question and ready document ID. In default
+   fake mode, save the returned `conversation_id` and verify
+   `status=completed`, `llm_provider=fake`, a non-empty `message_id`, and at
+   least one citation matching a marker in the answer.
+6. Call `POST /api/v1/chat` again with that `conversation_id`, the same document
+   ID, and a follow-up question. Verify the returned conversation ID is
+   unchanged and the new assistant message and citations are persisted.
+7. To inspect disabled behavior, restart with `LLM_PROVIDER=disabled` and send
+   a supported question to `POST /api/v1/chat`. Verify HTTP 503 and the
+   sanitized detail `LLM provider is not configured.` Use the legacy session
+   message route only when testing its HTTP 200 `llm_not_configured`
+   compatibility response.
 8. Ask a question for which retrieval returns no chunks above
    `RETRIEVAL_MIN_SCORE`. Verify the exact answer
-   `I could not find enough information in the provided documents.`,
+   `I could not find enough information in the selected documents.`,
    `status=completed`, and an empty citation list.
 
 Use `GET /api/v1/chat/sessions/{session_id}/messages` to confirm that user turns
@@ -339,9 +359,9 @@ Use the HTTP-mode environment block above, then run these commands in order:
 
 ```powershell
 docker compose up -d redis embedding-service
-alembic upgrade head
-celery -A app.infrastructure.queue.celery_app.celery_app worker --loglevel=info --pool=solo
-uvicorn app.main:app --reload
+python -m alembic upgrade head
+python -m celery -A app.infrastructure.queue.celery_app.celery_app worker --loglevel=info --pool=solo
+python -m uvicorn app.main:app --reload
 ```
 
 The Celery and FastAPI commands run in separate terminals and must start even
@@ -352,7 +372,7 @@ For a repeatable end-to-end semantic check:
 
 1. Confirm `Invoke-RestMethod http://127.0.0.1:8090/health` reports the MiniLM
    model and dimension 384.
-2. Run `alembic upgrade head` before processing documents.
+2. Run `python -m alembic upgrade head` before processing documents.
 3. Start the Windows Celery worker with the exact command above.
 4. Start FastAPI with the exact command above and open
    `http://127.0.0.1:8000/docs`.
@@ -378,8 +398,9 @@ For a repeatable end-to-end semantic check:
     is filtered by `RETRIEVAL_MIN_SCORE`.
 12. Call `POST /api/v1/context/build` with the related question and verify the
     relevant source context is present.
-13. A chat request may return `status=llm_not_configured` and `answer=null`;
-    that is expected while `LLM_PROVIDER=disabled`.
+13. A chat request returns a deterministic grounded answer in fake mode. It
+    returns `status=llm_not_configured` and `answer=null` only when explicitly
+    configured with `LLM_PROVIDER=disabled`.
 14. Queue `POST /api/v1/documents/{document_id}/reindex` twice, waiting for the
     first run to finish, and confirm the existing chunks are reused rather than
     duplicated and remain owner scoped.
@@ -395,7 +416,7 @@ inserted into `vector(384)`.
    Alembic revision. In that revision, set `embedding`, `embedding_model`,
    `embedding_provider`, and `embedded_at` to `NULL`, then alter the column to
    `extensions.vector(1536)`. Keep the provider metadata column.
-3. Apply that forward revision with `alembic upgrade head`. Documents and chunk
+3. Apply that forward revision with `python -m alembic upgrade head`. Documents and chunk
    text remain intact; only disposable embeddings are reset.
 4. Set:
 
@@ -412,7 +433,7 @@ inserted into `vector(384)`.
    service change is required.
 
 For a full Phase 8 schema-and-code rollback, the migration downgrade command is
-`alembic downgrade d4a6f21c8b90`; it also clears embeddings and restores
+`python -m alembic downgrade d4a6f21c8b90`; it also clears embeddings and restores
 `vector(1536)`. Do not run that downgrade while using the current Phase 8 code,
 because the downgraded schema removes `embedding_provider`.
 
@@ -422,4 +443,4 @@ fixed vector column and does not implement that redesign.
 
 Embedding and LLM providers are configured independently. OpenAI answer
 generation does not require changing `EMBEDDING_PROVIDER`; keep
-`LLM_PROVIDER=disabled` until a working generation provider is configured.
+`LLM_PROVIDER=fake` until a real OpenAI key is intentionally configured.

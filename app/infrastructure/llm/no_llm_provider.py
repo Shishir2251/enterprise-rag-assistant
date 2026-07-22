@@ -20,14 +20,22 @@ class NoLLMProvider(ILLMProvider):
     def is_configured(self) -> bool:
         return False
 
-    def generate(
+    async def generate(
         self,
         *,
         system_prompt: str,
         user_prompt: str,
         conversation_history: Sequence[LLMMessageDTO],
+        max_output_tokens: int | None = None,
+        temperature: float | None = None,
     ) -> LLMResponseDTO:
-        del system_prompt, user_prompt, conversation_history
+        del (
+            system_prompt,
+            user_prompt,
+            conversation_history,
+            max_output_tokens,
+            temperature,
+        )
         raise LLMConfigurationError("LLM provider is not configured.")
 
     def generate_answer(

@@ -4,6 +4,9 @@ from app.business.dtos.context_source_dto import ContextSourceDTO
 from app.business.dtos.llm_dto import LLMStatus
 
 
+MAX_CHAT_DOCUMENT_IDS = 100
+
+
 @dataclass(frozen=True, slots=True)
 class ChatTurnDTO:
     session_id: str
@@ -12,4 +15,5 @@ class ChatTurnDTO:
     status: LLMStatus
     answer: str | None
     citations: tuple[ContextSourceDTO, ...]
-
+    llm_provider: str | None = None
+    llm_model: str | None = None

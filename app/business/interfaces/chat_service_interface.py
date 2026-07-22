@@ -21,6 +21,14 @@ class IChatService(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def get_session(
+        self,
+        session_id: str,
+        owner_id: str,
+    ) -> ChatSessionModel:
+        raise NotImplementedError
+
+    @abstractmethod
     def get_history(
         self,
         session_id: str,
@@ -29,13 +37,12 @@ class IChatService(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def send_message(
+    async def send_message(
         self,
-        session_id: str,
+        session_id: str | None,
         owner_id: str,
         message: str,
         top_k: int | None = None,
         document_ids: Sequence[str] | None = None,
     ) -> ChatTurnDTO:
         raise NotImplementedError
-

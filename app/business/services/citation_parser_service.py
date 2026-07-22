@@ -8,7 +8,7 @@ class CitationParserService:
     """Map answer markers only to source metadata supplied to the model."""
 
     SOURCE_MARKER_PATTERN = re.compile(
-        r"\[\s*SOURCE\s+(\d+)\s*\]",
+        r"\[\s*SOURCE\s+([1-9][0-9]*)\s*\]",
         flags=re.IGNORECASE,
     )
 

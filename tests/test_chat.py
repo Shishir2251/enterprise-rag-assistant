@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
@@ -172,12 +173,14 @@ class ChatServiceTests(unittest.TestCase):
             _,
         ) = self.make_service()
 
-        result = service.send_message(
-            session_id="session-id",
-            owner_id="owner-id",
-            message="What technologies are used?",
-            top_k=4,
-            document_ids=["document-id"],
+        result = asyncio.run(
+            service.send_message(
+                session_id="session-id",
+                owner_id="owner-id",
+                message="What technologies are used?",
+                top_k=4,
+                document_ids=["document-id"],
+            )
         )
 
         self.assertEqual(result.status, "llm_not_configured")
@@ -210,10 +213,12 @@ class ChatServiceTests(unittest.TestCase):
         provider = AnsweringLLMProvider()
         service, _, message_repository, _, _ = self.make_service(provider)
 
-        result = service.send_message(
-            "session-id",
-            "owner-id",
-            "What technologies are used?",
+        result = asyncio.run(
+            service.send_message(
+                "session-id",
+                "owner-id",
+                "What technologies are used?",
+            )
         )
 
         self.assertEqual(result.status, "completed")
@@ -256,10 +261,12 @@ class ChatServiceTests(unittest.TestCase):
             )
         )
 
-        service.send_message(
-            "session-id",
-            "owner-id",
-            "Current question",
+        asyncio.run(
+            service.send_message(
+                "session-id",
+                "owner-id",
+                "Current question",
+            )
         )
 
         history = provider.calls[0]["conversation_history"]
@@ -279,10 +286,12 @@ class ChatServiceTests(unittest.TestCase):
         with self.assertRaises(NotFoundError):
             service.get_history("session-id", "other-owner")
         with self.assertRaises(NotFoundError):
-            service.send_message(
-                "session-id",
-                "other-owner",
-                "Unauthorized question",
+            asyncio.run(
+                service.send_message(
+                    "session-id",
+                    "other-owner",
+                    "Unauthorized question",
+                )
             )
 
         self.assertEqual(message_repository.messages, [])
@@ -297,10 +306,12 @@ class ChatServiceTests(unittest.TestCase):
         )
 
         with self.assertRaises(RuntimeError):
-            service.send_message(
-                "session-id",
-                "owner-id",
-                "Persist this question",
+            asyncio.run(
+                service.send_message(
+                    "session-id",
+                    "owner-id",
+                    "Persist this question",
+                )
             )
 
         self.assertEqual(len(message_repository.messages), 1)

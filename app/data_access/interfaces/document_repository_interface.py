@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 
 from app.data_access.models.document_model import DocumentModel
 
@@ -15,6 +16,15 @@ class IDocumentRepository(ABC):
         document_id: str,
         owner_id: str,
     ) -> DocumentModel | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_by_ids(
+        self,
+        document_ids: Sequence[str],
+        owner_id: str,
+    ) -> list[DocumentModel]:
+        """Return only documents in the requested owner scope."""
         raise NotImplementedError
 
     @abstractmethod

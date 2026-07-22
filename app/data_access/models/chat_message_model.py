@@ -14,12 +14,23 @@ class ChatMessageRole(str, Enum):
     ASSISTANT = "assistant"
 
 
+class ChatMessageStatus(str, Enum):
+    PENDING = "pending"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    FALLBACK = "fallback"
+
+
 class ChatMessageModel(Base):
     __tablename__ = "chat_messages"
     __table_args__ = (
         CheckConstraint(
             "role IN ('user', 'assistant')",
             name="ck_chat_messages_role",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'completed', 'failed', 'fallback')",
+            name="ck_chat_messages_status",
         ),
     )
 
@@ -46,6 +57,19 @@ class ChatMessageModel(Base):
         JSON,
         nullable=True,
     )
+    status: Mapped[str] = mapped_column(
+        String(20),
+        default=ChatMessageStatus.COMPLETED.value,
+        nullable=False,
+    )
+    llm_provider: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+    llm_model: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.utcnow,
@@ -57,3 +81,9 @@ class ChatMessageModel(Base):
         back_populates="messages",
     )
 
+    def __init__(self, **kwargs: Any) -> None:
+        # SQLAlchemy column defaults are normally applied during INSERT. Set
+        # the lifecycle default eagerly as well so service tests and in-memory
+        # repositories observe the same state as persisted rows.
+        kwargs.setdefault("status", ChatMessageStatus.COMPLETED.value)
+        super().__init__(**kwargs)

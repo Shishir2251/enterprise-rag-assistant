@@ -43,6 +43,18 @@ class ChatSessionRepository(IChatSessionRepository):
         )
         return list(self.db.scalars(statement).all())
 
+    def update_title(
+        self,
+        session_id: str,
+        owner_id: str,
+        title: str,
+    ) -> ChatSessionModel | None:
+        session = self.get_by_id(session_id, owner_id)
+        if session is None:
+            return None
+        session.title = title
+        return self.touch(session)
+
     def touch(self, session: ChatSessionModel) -> ChatSessionModel:
         session.updated_at = datetime.utcnow()
         try:
@@ -53,4 +65,3 @@ class ChatSessionRepository(IChatSessionRepository):
         except Exception:
             self.db.rollback()
             raise
-

@@ -1,0 +1,43 @@
+FIFA WORLD CUP 2026
+
+The FIFA World Cup 2026 will be hosted jointly by the United States, Canada,
+and Mexico. The tournament begins in June 2026 and will use venues across all
+three host countries. Supporters asking which nations are hosting the football
+tournament should be directed to the United States, Canada, and Mexico. This
+section concerns the international football competition rather than software,
+databases, or infrastructure.
+
+PYTHON AND MACHINE LEARNING
+
+Python is widely used for machine learning and data science. Libraries such as
+NumPy support numerical work, while common machine-learning tools help teams
+train models, evaluate predictions, and prepare datasets. A developer choosing
+a language for a machine-learning experiment can use Python because its data
+ecosystem is mature and accessible. This section is about programming and
+model development, not football hosting or caching.
+
+REDIS, CACHING, AND CELERY
+
+Redis is an in-memory data store commonly used for caching and message queues.
+Celery can use Redis as a broker so an API can enqueue background work without
+performing the job inside the request. Cached values reduce repeated work, and
+queued tasks let workers process documents asynchronously. This section is
+about fast temporary storage and distributed task delivery.
+
+POSTGRESQL AND PGVECTOR
+
+PostgreSQL is a relational database management system. The pgvector extension
+adds vector columns and similarity operators to PostgreSQL, allowing an
+application to store embeddings and rank chunks by vector distance. Relational
+filters can still enforce document ownership and ready status while semantic
+similarity determines ranking. This section concerns durable data and vector
+retrieval rather than background queues.
+
+DOCKER CONTAINERS
+
+Docker packages an application and its dependencies into a container image.
+Containers provide a consistent Linux runtime even when the host application
+runs on Windows. A Compose file can start Redis and a CPU embedding service,
+publish selected ports, attach persistent model-cache volumes, and monitor
+container health. This section concerns deployment isolation and repeatable
+service startup.

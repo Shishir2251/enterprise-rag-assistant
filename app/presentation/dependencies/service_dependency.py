@@ -201,13 +201,27 @@ def get_retrieval_service(
 
 def get_context_builder_service() -> IContextBuilder:
     return ContextBuilderService(
-        max_context_characters=settings.MAX_CONTEXT_CHARACTERS
+        max_context_characters=getattr(
+            settings,
+            "CHAT_CONTEXT_MAX_CHARACTERS",
+            settings.MAX_CONTEXT_CHARACTERS,
+        )
     )
 
 
 def get_prompt_builder_service() -> IPromptBuilder:
     return PromptBuilderService(
-        history_max_messages=settings.CHAT_HISTORY_MAX_MESSAGES
+        history_max_messages=settings.CHAT_HISTORY_MAX_MESSAGES,
+        history_max_characters=getattr(
+            settings,
+            "CHAT_HISTORY_MAX_CHARACTERS",
+            6000,
+        ),
+        no_context_message=getattr(
+            settings,
+            "CHAT_NO_CONTEXT_MESSAGE",
+            "I could not find enough information in the selected documents.",
+        ),
     )
 
 
@@ -222,6 +236,9 @@ def get_chat_service(
     message_repository: IChatMessageRepository = Depends(
         get_chat_message_repository
     ),
+    document_repository: IDocumentRepository = Depends(
+        get_document_repository
+    ),
     retrieval_service: IRetrievalService = Depends(get_retrieval_service),
     context_builder: IContextBuilder = Depends(get_context_builder_service),
     llm_provider: ILLMProvider = Depends(get_llm_provider),
@@ -233,10 +250,23 @@ def get_chat_service(
     return ChatService(
         session_repository=session_repository,
         message_repository=message_repository,
+        document_repository=document_repository,
         retrieval_service=retrieval_service,
         context_builder=context_builder,
         llm_provider=llm_provider,
         prompt_builder=prompt_builder,
         citation_parser=citation_parser,
         history_max_messages=settings.CHAT_HISTORY_MAX_MESSAGES,
+        history_max_characters=getattr(
+            settings,
+            "CHAT_HISTORY_MAX_CHARACTERS",
+            6000,
+        ),
+        default_top_k=getattr(settings, "CHAT_DEFAULT_TOP_K", 5),
+        maximum_top_k=getattr(settings, "CHAT_MAX_TOP_K", 10),
+        no_context_message=getattr(
+            settings,
+            "CHAT_NO_CONTEXT_MESSAGE",
+            "I could not find enough information in the selected documents.",
+        ),
     )
